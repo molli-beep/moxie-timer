@@ -32,6 +32,8 @@ final class TimerStore {
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let history: HistoryStore
     @ObservationIgnored private let storageKey = "timerState"
+    /// Called once an entry has reached Moxie, so the Notion mirror can follow.
+    @ObservationIgnored var onEntrySent: (() -> Void)?
 
     init(settings: AppSettings, history: HistoryStore) {
         self.settings = settings
@@ -192,6 +194,7 @@ final class TimerStore {
         sent.pending = nil
         sent.sendError = nil
         if isNew { history.add(sent) } else { history.update(sent) }
+        onEntrySent?()
         return sent
     }
 

@@ -144,12 +144,15 @@ struct PillBar: View {
                         }
                     }
                     .disabled(timer.isSaving)
-                } else if focus.target != nil {
-                    pillButton("play.fill", filled: true, help: "Start a focus block") {
-                        focus.startBlock(minutes: focus.suggestedMinutes)
-                    }
                 } else {
-                    pillButton("play.fill", filled: true, help: "Start timer") { timer.start() }
+                    pillButton("play.fill", filled: true, help: "Start timer") {
+                        // Time starts straight away; the card opens and asks what it's for. Focusing on the
+                        // Up next task is one of the choices, never the default.
+                        timer.start()
+                        ui.askWhatNow = true
+                        ui.tab = .timer
+                        ui.expand()
+                    }
                 }
             }
             .padding(.trailing, 4)
@@ -157,6 +160,7 @@ struct PillBar: View {
             // Opaque, so the pill stays readable over dark windows; the orange tint sits on top.
             .background(Capsule().fill(Theme.pill).overlay(Capsule().fill(Theme.onBreak.opacity(alerting ? 0.15 : 0))))
             .overlay(Capsule().strokeBorder(alerting ? Theme.onBreak : Theme.navy.opacity(0.35), lineWidth: alerting ? 1.5 : 1))
+            .compositingGroup()
             .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
         }
     }
@@ -266,6 +270,7 @@ struct ExpandedCard: View {
         .frame(width: ui.route == .review ? 600 : 540)
         .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.white))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.border))
+        .compositingGroup()
         .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
         .onExitCommand { ui.collapse() }
     }
@@ -351,6 +356,7 @@ struct CheckInBubble: View {
         .frame(width: 280, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.warmup.opacity(0.5)))
+        .compositingGroup()
         .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
     }
 }

@@ -90,6 +90,8 @@ final class FocusStore {
     private(set) var isFinishing = false
 
     @ObservationIgnored var onPhaseChange: (() -> Void)?
+    /// Called after a task is finished or completed, so other systems (Notion sync) can catch up.
+    @ObservationIgnored var onTaskChanged: (() -> Void)?
     @ObservationIgnored private let timer: TimerStore
     @ObservationIgnored private let inbox: TaskInbox
     @ObservationIgnored private var ticker: Timer?
@@ -279,8 +281,36 @@ final class FocusStore {
 
     /// Finishes the work: saves the time, clears it from "Up next" and counts it as done.
     /// With `closeInMoxie` the task is also completed (or the ticket closed) in Moxie; otherwise Moxie is untouched.
-    func finish(closeInMoxie: Bool) async {
-        let markComplete = closeInMoxie
+    /// What happens to the task when you finish working on it.
+    enum TaskOutcome: Equatable {
+        /// Complete it in Moxie (close a ticket); Notion follows with "Done".
+        case done
+        /// Leave it open everywhere; only the time is saved.
+        case keepOpen
+        /// Set a status (a Notion status name, e.g. "Waiting on Client"). Moxie gets the same stage when its
+        /// project type has one with that label.
+        case status(String)
+    }
+
+    /// The task just finished, kept for the quick actions under the celebration banner.
+    struct FinishedTask: Equatable {
+        var name: String
+        var taskId: String?
+        var client: Ref?
+        var project: Ref?
+    }
+
+    private(set) var lastFinished: FinishedTask?
+    /// Called with (Moxie task id, status name) when the user picks a status at finish time.
+    @ObservationIgnored var onStatusChosen: ((String, String) -> Void)?
+
+    func clearBanner() {
+        banner = nil
+        lastFinished = nil
+    }
+
+    func finish(outcome: TaskOutcome) async {
+        let markComplete = outcome == .done
         guard !isFinishing else { return }
         isFinishing = true
         defer { isFinishing = false }
@@ -297,9 +327,23 @@ final class FocusStore {
             }
         }
 
-        var message = "Nice work — “\(finishedTarget?.name ?? "task")” done"
+        var message: String
+        switch outcome {
+        case .done: message = "Nice work — “\(finishedTarget?.name ?? "task")” done"
+        case .keepOpen: message = "Saved — “\(finishedTarget?.name ?? "task")” stays open"
+        case let .status(name): message = "“\(finishedTarget?.name ?? "task")” → \(name)"
+        }
         if focused >= 60 { message += " after \(DurationFormat.short(focused)) of focus" }
         message += "."
+        if case let .status(name) = outcome, let taskId = finishedTarget?.taskId {
+            onStatusChosen?(taskId, name)
+            let task = inbox.tasks.first { $0.id == taskId }
+                ?? MoxieTask(id: taskId, name: finishedTarget?.name ?? "", projectId: nil, status: nil, parentTaskId: nil,
+                             projectTypeId: finishedTarget?.projectTypeId)
+            if let matched = try? await inbox.setStage(task, label: name) {
+                message += matched ? " Moxie updated ✓" : " (Moxie has no “\(name)” stage, so it stays as is there.)"
+            }
+        }
         if markComplete, let ticketId = finishedTarget?.ticketId {
             do {
                 let confirmed = try await inbox.closeTicket(id: ticketId)
@@ -318,10 +362,17 @@ final class FocusStore {
                 lastError = "Time saved, but marking the task complete failed: \(error.localizedDescription)"
             }
         }
-        stats.record { $0.tasksDone += 1 }
+        if markComplete { stats.record { $0.tasksDone += 1 } }
+        let inboxTask = finishedTarget?.taskId.flatMap { id in inbox.tasks.first { $0.id == id } }
         target = nil
         banner = message
-        NSSound(named: "Hero")?.play()
+        lastFinished = finishedTarget.map {
+            FinishedTask(name: $0.name, taskId: $0.taskId,
+                         client: inboxTask?.clientRef ?? timer.draft.client,
+                         project: inboxTask?.projectRef ?? timer.draft.project)
+        }
+        if markComplete { NSSound(named: "Hero")?.play() }
+        onTaskChanged?()
     }
 
     /// Completes a task (or closes a ticket) straight from a list, without focusing on it.
@@ -341,6 +392,7 @@ final class FocusStore {
                 ? "“\(task.name)” \(task.isTicket ? "closed" : "marked complete") in Moxie ✓"
                 : "Sent to Moxie, but it didn't confirm “\(task.name)” — check it there."
             NSSound(named: "Hero")?.play()
+            onTaskChanged?()
         } catch {
             lastError = error.localizedDescription
         }

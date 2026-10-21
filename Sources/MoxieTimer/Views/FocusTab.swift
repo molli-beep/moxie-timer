@@ -17,7 +17,7 @@ struct FocusTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let banner = focus.banner {
-                CelebrationBanner(message: banner) { focus.banner = nil }
+                CelebrationBanner(message: banner, finished: focus.lastFinished) { focus.clearBanner() }
             }
             if let error = focus.lastError {
                 ErrorBanner(message: error) { focus.lastError = nil }
@@ -272,31 +272,8 @@ struct FocusTab: View {
             .buttonStyle(PrimaryButtonStyle())
             .keyboardShortcut(.defaultAction)
 
-            Button { Task { await focus.finish(closeInMoxie: closesInMoxie(target)) } } label: {
-                Label(doneTitle(target), systemImage: "checkmark.circle").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(ChipButtonStyle())
-            .disabled(focus.isFinishing)
-            .help(doneHelp(target))
+            FinishControl(target: target, primary: false)
         }
-    }
-
-    /// Only when the user opted in, and only for real Moxie tasks/tickets.
-    private func closesInMoxie(_ target: FocusTarget) -> Bool {
-        settings.completeInMoxie && (target.taskId != nil || target.ticketId != nil)
-    }
-
-    private func doneTitle(_ target: FocusTarget) -> String {
-        guard closesInMoxie(target) else { return "Finish" }
-        return target.ticketId != nil ? "Finish & close ticket" : "Finish & complete"
-    }
-
-    private func doneHelp(_ target: FocusTarget) -> String {
-        let time = timer.session != nil ? "Saves the running time and clears it from Up next. " : "Clears it from Up next. "
-        guard closesInMoxie(target) else {
-            return time + "The task stays open in Moxie — close it there when you're ready (or turn on closing in Settings → Focus)."
-        }
-        return time + (target.ticketId != nil ? "Also sets the ticket's status in Moxie." : "Also marks the task complete in Moxie.")
     }
 
     private func suggestStep(_ target: FocusTarget) async {
@@ -372,17 +349,12 @@ struct FocusTab: View {
                 Spacer()
             }
 
-            HStack(spacing: 8) {
+            FinishControl(target: target, primary: true) {
                 Button { Task { await focus.saveForLater() } } label: {
                     Text("Save, continue later").lineLimit(1).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(ChipButtonStyle())
                 .help("Save the time and keep this as Up next")
-                Button { Task { await focus.finish(closeInMoxie: closesInMoxie(target)) } } label: {
-                    Label(doneTitle(target), systemImage: "checkmark").lineLimit(1).frame(maxWidth: .infinity)
-                }
-                .buttonStyle(PrimaryButtonStyle())
-                .help(doneHelp(target))
             }
             .disabled(focus.isFinishing)
         }
@@ -538,14 +510,20 @@ struct DueBadge: View {
 
 struct CelebrationBanner: View {
     let message: String
+    var finished: FocusStore.FinishedTask? = nil
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("🎉")
-            Text(message).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button(action: onDismiss) { Image(systemName: "xmark") }.buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Text("🎉")
+                Text(message).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button(action: onDismiss) { Image(systemName: "xmark") }.buttonStyle(.plain)
+            }
+            if let finished {
+                QuickActionsRow(finished: finished, onDone: onDismiss)
+            }
         }
         .font(.system(size: 12))
         .foregroundStyle(Theme.ink)

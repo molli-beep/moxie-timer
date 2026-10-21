@@ -257,7 +257,15 @@ struct CaptureView: View {
             // Start from the Up next filter (so the new task shows there); otherwise unlinked, with the
             // timer's client/project offered as a one-click chip.
             draft = EntryDraft()
-            if let client = inbox.filterClient {
+            if let seed = ui.captureSeed {
+                // A follow-up to the task just finished: same client and project.
+                ui.captureSeed = nil
+                if let client = seed.client {
+                    draft.setClient(client)
+                    if let project = seed.project { draft.setProject(project) }
+                    Task { await catalog.loadProjects(for: client) }
+                }
+            } else if let client = inbox.filterClient {
                 draft.setClient(client)
                 if let project = inbox.filterProject { draft.setProject(project) }
                 Task { await catalog.loadProjects(for: client) }

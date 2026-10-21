@@ -52,6 +52,9 @@ struct TimerTab: View {
                 }
             }
 
+            if timer.session != nil, ui.askWhatNow || timer.draft.client == nil {
+                QuickPickStrip()
+            }
             if timer.draft.client == nil {
                 SuggestionChip()
             }

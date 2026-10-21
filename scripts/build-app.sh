@@ -30,6 +30,12 @@ if [[ "$ADHOC" == 1 ]]; then
   SIGN_IDENTITY=""
 elif [[ -z "${SIGN_IDENTITY:-}" ]]; then
   SIGN_IDENTITY="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)"
+  # No Developer ID: a self-signed "Moxie Timer Dev" certificate (Keychain Access → Certificate Assistant →
+  # Create a Certificate, type Code Signing) keeps the signature stable between builds, so the Keychain
+  # access prompt for the API keys appears once instead of after every rebuild.
+  if [[ -z "$SIGN_IDENTITY" ]] && security find-identity -v -p codesigning | grep -q '"Moxie Timer Dev"'; then
+    SIGN_IDENTITY="Moxie Timer Dev"
+  fi
 fi
 
 swift build -c release ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}

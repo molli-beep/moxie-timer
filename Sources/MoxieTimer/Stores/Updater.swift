@@ -8,7 +8,9 @@ import Observation
 /// swaps the app bundle in place and relaunches.
 @MainActor @Observable
 final class Updater {
-    static let repository = "flyingwebie/moxie-timer"
+    /// This fork's releases. Updates from the upstream project would overwrite the Notion sync, so they
+    /// are not offered; merge upstream changes into the fork and cut a release there instead.
+    static let repository = "molli-beep/moxie-timer"
     private static let checkInterval: TimeInterval = 6 * 3600
 
     struct Release: Equatable {
@@ -65,6 +67,13 @@ final class Updater {
             request.setValue("MoxieTimer/\(currentVersion)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw UpdateError("No response from GitHub.") }
+            if http.statusCode == 404 {
+                // The fork has no releases yet: nothing to update to.
+                lastChecked = .now
+                latest = nil
+                state = .upToDate
+                return
+            }
             guard http.statusCode == 200 else { throw UpdateError("GitHub returned HTTP \(http.statusCode).") }
 
             let decoder = JSONDecoder()

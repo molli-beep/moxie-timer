@@ -117,6 +117,10 @@ struct SettingsView: View {
 
             Divider()
 
+            NotionSettingsSection()
+
+            Divider()
+
             DistractionSettingsSection()
 
             Divider()

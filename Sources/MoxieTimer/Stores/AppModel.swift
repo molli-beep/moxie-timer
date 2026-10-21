@@ -34,6 +34,14 @@ final class WidgetUI {
     var tab: Tab = .focus
     var route: Route?
     var editorSeed: EditorSeed?
+    /// Client/project the capture screen should start from (a follow-up to the task just finished).
+    struct CaptureSeed {
+        var client: Ref?
+        var project: Ref?
+    }
+    var captureSeed: CaptureSeed?
+    /// Set when play is pressed: the Timer tab asks "What are you working on?" until a choice is made.
+    var askWhatNow = false
     /// Set by the panel controller; shows/hides the floating widget.
     @ObservationIgnored var onVisibilityRequest: ((Bool) -> Void)?
 
@@ -76,6 +84,7 @@ final class AppModel {
     let activity: ActivityWatcher
     let pet: PetStore
     let calls: CallDetector
+    let notion: NotionSync
 
     private init() {
         settings = AppSettings()
@@ -99,5 +108,11 @@ final class AppModel {
         pet.isInCall = { calls.inCall }
         let inbox = inbox
         pet.taskDue = { id in inbox.tasks.first { $0.id == id }?.due }
+        notion = NotionSync(settings: settings, history: history, catalog: catalog)
+        let notion = notion
+        // A finished task or a logged entry reaches Notion within seconds, not at the next scheduled sync.
+        focus.onTaskChanged = { notion.requestSoon() }
+        focus.onStatusChosen = { id, status in notion.setStatus(taskId: id, status: status) }
+        timer.onEntrySent = { notion.requestSoon() }
     }
 }

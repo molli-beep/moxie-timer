@@ -15,6 +15,8 @@ struct MoxieTimerApp: App {
                 .environment(model.focus)
                 .environment(model.history)
                 .environment(model.calls)
+                .environment(model.notion)
+                .environment(model.settings)
         } label: {
             MenuBarLabel()
                 .environment(model.timer)
@@ -134,6 +136,8 @@ private struct MenuBarMenu: View {
     @Environment(Updater.self) private var updater
     @Environment(HistoryStore.self) private var history
     @Environment(CallDetector.self) private var calls
+    @Environment(NotionSync.self) private var notion
+    @Environment(AppSettings.self) private var settings
 
     var body: some View {
         if !history.pending.isEmpty {
@@ -180,6 +184,12 @@ private struct MenuBarMenu: View {
         Button("Add Time Entry…") {
             delegate.panelController?.setVisible(true)
             ui.expand(route: .addEntry)
+        }
+        if settings.notionIsConfigured {
+            Button(notion.isSyncing ? "Syncing to Notion…" : "Sync to Notion Now") {
+                Task { await notion.sync(userInitiated: true) }
+            }
+            .disabled(notion.isSyncing)
         }
         Toggle("I'm in a Call", isOn: Binding(get: { calls.inCall }, set: { if $0 != calls.inCall { calls.toggle() } }))
             .help("Pauses breaks and nudges while the timer keeps tracking. Calls using the microphone are detected automatically.")

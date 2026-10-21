@@ -68,6 +68,7 @@ struct NudgePromptView: View {
         .frame(width: 400)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.white))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Theme.onBreak.opacity(0.5), lineWidth: 1.5))
+        .compositingGroup()
         .shadow(color: .black.opacity(0.25), radius: 20, y: 8)
         .padding(30)
     }

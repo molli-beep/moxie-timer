@@ -230,6 +230,19 @@ final class TaskInbox {
         myUserEmail = email
     }
 
+    /// Moves the task to the stage of its project type whose label matches `label` (case-insensitive).
+    /// Returns false when the project type has no such stage, in which case Moxie is left alone.
+    func setStage(_ task: MoxieTask, label: String) async throws -> Bool {
+        guard let api = settings.makeAPI() else { throw LogError.notConfigured }
+        guard !task.id.hasPrefix("local-") else { throw UpdateError("This task hasn't synced with Moxie yet.") }
+        let stages = try await api.taskStages(projectTypeId: task.projectTypeId)
+        let wanted = label.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let stage = stages.first(where: { ($0.label ?? "").trimmingCharacters(in: .whitespaces).lowercased() == wanted })
+            ?? stages.first(where: { ($0.label ?? "").lowercased().contains(wanted) }) else { return false }
+        _ = try await api.updateTask(id: task.id, fields: ["statusId": stage.id])
+        return true
+    }
+
     // MARK: Ranking
 
     /// Rule-based priority: overdue and due-soon first, then priority, then how long it's been waiting.

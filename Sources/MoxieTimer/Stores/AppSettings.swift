@@ -20,6 +20,34 @@ final class AppSettings {
         didSet { defaults.set(baseURL, forKey: "apiBaseURL") }
     }
 
+    // MARK: Notion sync
+
+    /// Internal integration secret; stored in the Keychain like the Moxie key.
+    var notionToken: String {
+        didSet { Keychain.set(notionToken.trimmingCharacters(in: .whitespacesAndNewlines), for: "notionToken") }
+    }
+    var notionEnabled: Bool { didSet { defaults.set(notionEnabled, forKey: "notionEnabled") } }
+    /// Sync only tasks assigned to me (or unassigned), like the focus inbox's "only mine".
+    var notionOnlyMine: Bool { didSet { defaults.set(notionOnlyMine, forKey: "notionOnlyMine") } }
+    var notionSyncMinutes: Int { didSet { defaults.set(notionSyncMinutes, forKey: "notionSyncMinutes") } }
+    /// Notion data source ids (the `collection://` ids). Defaults are the Virtually Molli OS databases.
+    var notionTasksDB: String { didSet { defaults.set(notionTasksDB, forKey: "notionTasksDB") } }
+    var notionProjectsDB: String { didSet { defaults.set(notionProjectsDB, forKey: "notionProjectsDB") } }
+    var notionClientsDB: String { didSet { defaults.set(notionClientsDB, forKey: "notionClientsDB") } }
+    var notionTimeDB: String { didSet { defaults.set(notionTimeDB, forKey: "notionTimeDB") } }
+    /// Comma-separated Notion statuses offered when finishing a task, besides Done and "keep open".
+    var finishStatuses: String { didSet { defaults.set(finishStatuses, forKey: "finishStatuses") } }
+    static let defaultFinishStatuses = "In progress, Waiting on Client, Waiting on Third Party, Ready for Approval, Need to Revise"
+
+    var finishStatusList: [String] {
+        finishStatuses.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    static let defaultNotionTasksDB = "25c50460-d03a-805c-b3bc-000b135a9f80"
+    static let defaultNotionProjectsDB = "2b350460-d03a-8031-9b59-000bc8e425c6"
+    static let defaultNotionClientsDB = "2c250460-d03a-80c0-bd42-000bbd199dbe"
+    static let defaultNotionTimeDB = "25c50460-d03a-806f-898d-000bee8f282f"
+
     var keepOnTop: Bool {
         didSet { defaults.set(keepOnTop, forKey: "keepOnTop"); onWindowPreferencesChange?() }
     }
@@ -195,6 +223,15 @@ final class AppSettings {
         ticketDoneStatus = defaults.string(forKey: "ticketDoneStatus") ?? "Closed"
         ticketDefaultType = defaults.string(forKey: "ticketDefaultType") ?? ""
         completeInMoxie = defaults.object(forKey: "completeInMoxie") as? Bool ?? false
+        notionToken = Keychain.get("notionToken") ?? ""
+        notionEnabled = defaults.object(forKey: "notionEnabled") as? Bool ?? true
+        notionOnlyMine = defaults.object(forKey: "notionOnlyMine") as? Bool ?? true
+        notionSyncMinutes = defaults.object(forKey: "notionSyncMinutes") as? Int ?? 15
+        notionTasksDB = defaults.string(forKey: "notionTasksDB") ?? Self.defaultNotionTasksDB
+        notionProjectsDB = defaults.string(forKey: "notionProjectsDB") ?? Self.defaultNotionProjectsDB
+        notionClientsDB = defaults.string(forKey: "notionClientsDB") ?? Self.defaultNotionClientsDB
+        notionTimeDB = defaults.string(forKey: "notionTimeDB") ?? Self.defaultNotionTimeDB
+        finishStatuses = defaults.string(forKey: "finishStatuses") ?? Self.defaultFinishStatuses
         detectCalls = defaults.object(forKey: "detectCalls") as? Bool ?? true
         callIgnoreList = defaults.string(forKey: "callIgnoreList")
             ?? "screenpipe, krisp, whisper, dictation, siri, corespeech, voice memos, voicememos"
@@ -253,6 +290,18 @@ final class AppSettings {
 
     var isConfigured: Bool {
         makeAPI() != nil && !userEmail.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Notion sync can run: switched on, token present, every database id filled in, and Moxie connected.
+    var notionIsConfigured: Bool {
+        notionEnabled && makeNotion() != nil && isConfigured
+            && ![notionTasksDB, notionProjectsDB, notionClientsDB, notionTimeDB].contains { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    func makeNotion() -> NotionAPI? {
+        let token = notionToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return nil }
+        return NotionAPI(token: token)
     }
 
     func makeAPI() -> MoxieAPI? {

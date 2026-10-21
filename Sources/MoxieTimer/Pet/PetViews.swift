@@ -56,6 +56,7 @@ struct PetBubble: View {
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder((pet.lineIsDrift ? Theme.onBreak : Theme.running).opacity(0.45), lineWidth: 1.2))
+            .compositingGroup()
             .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
         }
     }
