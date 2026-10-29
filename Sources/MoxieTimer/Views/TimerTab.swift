@@ -29,11 +29,33 @@ struct TimerTab: View {
                     size: 44,
                     filled: timer.session == nil,
                     help: timer.session == nil ? "Start" : (timer.session!.isRunning ? "Pause" : "Resume")
-                ) { timer.toggle() }
+                ) {
+                    if timer.session == nil {
+                        timer.start()
+                        ui.route = .pickTask
+                    } else {
+                        timer.toggle()
+                    }
+                }
             }
 
             if let session = timer.session {
                 adjustBox(session: session, now: now)
+
+                Button { ui.route = .pickTask } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: timer.draft.task == nil ? "exclamationmark.circle" : "checklist")
+                        Text(timer.draft.task.map { "Task: \($0.name)" } ?? "No task yet · pick one")
+                            .lineLimit(1)
+                        if timer.draft.currentTaskMeta?.clickUpURL != nil { ClickUpBadge() }
+                        Spacer(minLength: 4)
+                        Text(timer.draft.task == nil ? "Pick" : "Switch").fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(ChipButtonStyle())
+                .foregroundStyle(timer.draft.task == nil ? Theme.onBreak : Theme.ink)
+                .help("Switching saves the time so far as its own entry and starts a new one on the new task")
 
                 if focus.block == nil {
                     Button {
@@ -163,7 +185,10 @@ struct TimerTab: View {
                 .disabled(timer.isSaving)
             }
         } else {
-            Button { timer.start() } label: {
+            Button {
+                timer.start()
+                ui.route = .pickTask
+            } label: {
                 Label("Start timer", systemImage: "play.fill").frame(maxWidth: .infinity)
             }
             .buttonStyle(PrimaryButtonStyle())

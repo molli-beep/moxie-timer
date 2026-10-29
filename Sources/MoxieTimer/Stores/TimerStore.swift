@@ -97,6 +97,37 @@ final class TimerStore {
         draft.ticket = nil
     }
 
+    /// Puts the timer on `newDraft`. Time already tracked against something (a task or client) is stopped and
+    /// saved as its own entry first, then a fresh timer starts on the new work. A timer that has nothing
+    /// chosen yet, or has run under a minute, simply carries its time over to the new choice.
+    /// Returns false when the previous time couldn't be saved (it stays on the timer, paused).
+    @discardableResult
+    func switchTo(_ newDraft: EntryDraft) async -> Bool {
+        lastError = nil
+        guard let current = session else {
+            draft = newDraft
+            start()
+            return true
+        }
+        let hasChoice = draft.task != nil || draft.client != nil
+        let elapsed = current.elapsed(at: .now)
+        guard hasChoice, elapsed >= 60, draft.task?.id != newDraft.task?.id else {
+            draft = newDraft
+            if !current.isRunning { resume() }
+            return true
+        }
+        guard canSaveCurrent else {
+            // Not in review mode and no client: nothing to save against, so the time carries over.
+            draft = newDraft
+            return true
+        }
+        await stopAndSave()
+        guard session == nil else { return false }
+        draft = newDraft
+        start()
+        return true
+    }
+
     /// Starts a new timer for the same client/project/task as a past entry.
     func startAgain(from entry: LoggedEntry) {
         guard session == nil else { return }

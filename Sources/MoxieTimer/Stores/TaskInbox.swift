@@ -104,6 +104,11 @@ final class TaskInbox {
         return pinned + ranked.filter { !justAdded.contains($0.id) }
     }
 
+    /// Open Moxie tasks (no tickets) after "only mine", ignoring the Up next filter. Used by the start picker.
+    var pickableTasks: [MoxieTask] {
+        baseItems.filter { !$0.isTicket }
+    }
+
     /// Whether a task would show under the current client/project filter.
     func matchesFilter(_ task: MoxieTask) -> Bool {
         if let client = filterClient, task.clientRef?.id != client.id { return false }

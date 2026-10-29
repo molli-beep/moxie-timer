@@ -20,7 +20,7 @@ final class Clock {
 @MainActor @Observable
 final class WidgetUI {
     enum Tab { case focus, timer, recent, insights, pet }
-    enum Route { case settings, addEntry, tasks, capture, review }
+    enum Route { case settings, addEntry, tasks, capture, review, pickTask }
 
     /// How the entry editor should open: blank, prefilled with a time range (filling a gap), or editing a held entry.
     struct EditorSeed {

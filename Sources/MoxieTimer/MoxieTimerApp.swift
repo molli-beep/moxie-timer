@@ -169,7 +169,12 @@ private struct MenuBarMenu: View {
             .disabled(timer.isSaving)
             Button("Discard Timer") { timer.discard() }
         } else {
-            Button("Start Timer") { timer.start() }
+            Button("Start Timer…") {
+                timer.start()
+                delegate.panelController?.setVisible(true)
+                ui.tab = .timer
+                ui.expand(route: .pickTask)
+            }
         }
         Divider()
         Button("Capture Task…  (\(HotKey.captureDescription))") {

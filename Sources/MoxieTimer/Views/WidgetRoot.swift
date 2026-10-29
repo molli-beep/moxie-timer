@@ -146,12 +146,11 @@ struct PillBar: View {
                     .disabled(timer.isSaving)
                 } else {
                     pillButton("play.fill", filled: true, help: "Start timer") {
-                        // Time starts straight away; the card opens and asks what it's for. Focusing on the
-                        // Up next task is one of the choices, never the default.
+                        // Time starts straight away; the card opens on the task picker so the entry is tied
+                        // to a Moxie task from the start ("No task" is one of the choices).
                         timer.start()
-                        ui.askWhatNow = true
                         ui.tab = .timer
-                        ui.expand()
+                        ui.expand(route: .pickTask)
                     }
                 }
             }
@@ -249,6 +248,8 @@ struct ExpandedCard: View {
                 CaptureView()
             } else if ui.route == .review {
                 ReviewView()
+            } else if ui.route == .pickTask {
+                TaskPickerView()
             } else {
                 VStack(spacing: 0) {
                     UpdateBanner()
@@ -344,8 +345,8 @@ struct CheckInBubble: View {
                     .buttonStyle(ChipButtonStyle())
                 Button("Switch task") {
                     activity.answerCheckIn(.switchTask)
-                    ui.tab = .focus
-                    ui.expand(route: .tasks)
+                    ui.tab = .timer
+                    ui.expand(route: .pickTask)
                 }
                 .buttonStyle(ChipButtonStyle())
                 Button("Break") { activity.answerCheckIn(.takeBreak) }
