@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// End-of-day review: check held entries, fill gaps, fix categories, then send everything to Moxie at once.
+/// End-of-day review: check held entries, fill gaps, attach tasks, tick the ones that are done, then send.
+/// Time goes to Moxie first, then ticked tasks are completed in Moxie, then Notion is mirrored.
 struct ReviewView: View {
     /// Gaps are untracked stretches inside your work hours; they can be hidden or dismissed one by one.
     @AppStorage("reviewShowGaps") private var showGaps = true
@@ -10,6 +11,7 @@ struct ReviewView: View {
     @Environment(TimerStore.self) private var timer
     @Environment(AppSettings.self) private var settings
     @Environment(WidgetUI.self) private var ui
+    @Environment(ReviewPusher.self) private var pusher
 
     @State private var result: String?
 
@@ -38,6 +40,7 @@ struct ReviewView: View {
         let pending = history.pending
         let ready = pending.filter(\.hasCategory)
         let missing = pending.count - ready.count
+        let noTask = pending.filter { !$0.hasTask }.count
 
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -80,6 +83,7 @@ struct ReviewView: View {
                 HStack(spacing: 8) {
                     summary("Held", "\(pending.count)")
                     summary("Time", DurationFormat.short(pending.reduce(0) { $0 + $1.duration }))
+                    summary("No task", "\(noTask)", warn: noTask > 0)
                     summary("Need client", "\(missing)", warn: missing > 0)
                 }
 
@@ -119,15 +123,20 @@ struct ReviewView: View {
             if !pending.isEmpty {
                 Button { Task { await send() } } label: {
                     HStack(spacing: 8) {
-                        if timer.isSending { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "paperplane.fill") }
-                        Text(timer.isSending ? "Sending…" : "Send \(ready.count) to Moxie")
+                        if pusher.isPushing { ProgressView().controlSize(.small).tint(.white) } else { Image(systemName: "paperplane.fill") }
+                        Text(pusher.isPushing ? "Sending…" : "Send \(ready.count) to Moxie")
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(ready.isEmpty || timer.isSending)
+                .disabled(ready.isEmpty || pusher.isPushing)
+                if noTask > 0 {
+                    Text("Highlighted entries have no task. Click one to attach a task, or send it as it is.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.onBreak)
+                }
                 if missing > 0 {
-                    Text("Entries without a client stay here until you pick one. Project and ticket are optional.")
+                    Text("Entries without a client stay here until you pick one.")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.muted)
                 }
@@ -148,70 +157,127 @@ struct ReviewView: View {
     }
 
     private func entryRow(_ entry: LoggedEntry) -> some View {
-        Button {
-            ui.editorSeed = .init(editId: entry.id, returnTo: .review)
-            ui.route = .addEntry
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.start.formatted(date: .omitted, time: .shortened))
-                    Text(entry.end.formatted(date: .omitted, time: .shortened)).foregroundStyle(Theme.faint)
-                }
-                .font(.system(size: 11).monospacedDigit())
-                .frame(width: 58, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                ui.editorSeed = .init(editId: entry.id, returnTo: .review)
+                ui.route = .addEntry
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(entry.start.formatted(date: .omitted, time: .shortened))
+                        Text(entry.end.formatted(date: .omitted, time: .shortened)).foregroundStyle(Theme.faint)
+                    }
+                    .font(.system(size: 11).monospacedDigit())
+                    .frame(width: 58, alignment: .leading)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    if entry.hasCategory {
-                        Text([entry.draft.client?.name, entry.draft.project?.name].compactMap { $0 }.joined(separator: " · "))
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(1)
-                    } else {
-                        Label("Pick a client", systemImage: "exclamationmark.circle.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Theme.onBreak)
-                    }
-                    let detail = [entry.draft.task?.name, entry.draft.notes.isEmpty ? nil : entry.draft.notes]
-                        .compactMap { $0 }.joined(separator: " · ")
-                    if !detail.isEmpty {
-                        Text(detail).font(.system(size: 11)).foregroundStyle(Theme.muted).lineLimit(2)
-                    }
-                    if let error = entry.sendError {
-                        Text(error).font(.system(size: 10)).foregroundStyle(Theme.danger).lineLimit(2)
-                    }
-                }
-                Spacer(minLength: 4)
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(DurationFormat.clock(entry.duration))
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                    if entry.hasCategory {
-                        Button { Task { await sendOne(entry) } } label: {
-                            Group {
-                                if sendingIds.contains(entry.id) {
-                                    ProgressView().controlSize(.mini)
-                                } else {
-                                    Label("Send", systemImage: "paperplane.fill").font(.system(size: 10, weight: .semibold))
-                                }
-                            }
-                            .foregroundStyle(Theme.navy)
-                            .padding(.horizontal, 7)
-                            .frame(height: 20)
-                            .background(Capsule().fill(Theme.navy.opacity(0.08)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        if entry.hasCategory {
+                            Text([entry.draft.client?.name, entry.draft.project?.name ?? "No project"].compactMap { $0 }.joined(separator: " · "))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.ink)
+                                .lineLimit(1)
+                        } else {
+                            Label("Pick a client", systemImage: "exclamationmark.circle.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.onBreak)
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!sendingIds.isEmpty || timer.isSending)
-                        .help("Send just this entry to Moxie now")
+                        if let task = entry.draft.task {
+                            HStack(spacing: 5) {
+                                Image(systemName: "checklist").font(.system(size: 10))
+                                Text(task.name).lineLimit(1)
+                                if entry.draft.currentTaskMeta?.clickUpURL != nil { ClickUpBadge() }
+                            }
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.ink.opacity(0.8))
+                        } else {
+                            Label("No task · click to attach one", systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Theme.onBreak)
+                        }
+                        if !entry.draft.notes.isEmpty {
+                            Text(entry.draft.notes).font(.system(size: 11)).foregroundStyle(Theme.muted).lineLimit(2)
+                        }
+                        if let error = entry.sendError {
+                            Text(error).font(.system(size: 10)).foregroundStyle(Theme.danger).lineLimit(2)
+                        }
                     }
-                }
+                    Spacer(minLength: 4)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(DurationFormat.clock(entry.duration))
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        if entry.hasCategory {
+                            Button { Task { await sendOne(entry) } } label: {
+                                Group {
+                                    if sendingIds.contains(entry.id) {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Label("Send", systemImage: "paperplane.fill").font(.system(size: 10, weight: .semibold))
+                                    }
+                                }
+                                .foregroundStyle(Theme.navy)
+                                .padding(.horizontal, 7)
+                                .frame(height: 20)
+                                .background(Capsule().fill(Theme.navy.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(!sendingIds.isEmpty || pusher.isPushing)
+                            .help("Send just this entry to Moxie now")
+                        }
+                    }
                     .foregroundStyle(Theme.ink)
+                }
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if entry.hasTask {
+                doneControls(entry)
+                    .padding(.leading, 68)
+            }
         }
-        .buttonStyle(HoverRowStyle())
+        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(entry.hasTask ? .clear : Theme.onBreak.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(entry.hasTask ? .clear : Theme.onBreak.opacity(0.35)))
+        .padding(.vertical, 1)
         .contextMenu {
             Button("Delete", role: .destructive) { history.remove(entry) }
+        }
+    }
+
+    /// "Mark task done", plus the second tick when a client portal user is assigned to the task.
+    @ViewBuilder
+    private func doneControls(_ entry: LoggedEntry) -> some View {
+        let markDone = entry.draft.markTaskDone == true
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle("Mark task done", isOn: Binding(
+                get: { markDone },
+                set: { value in
+                    var updated = entry
+                    updated.draft.markTaskDone = value ? true : nil
+                    if !value { updated.draft.confirmClientNotice = nil }
+                    history.update(updated)
+                }
+            ))
+            .toggleStyle(.checkbox)
+            .font(.system(size: 11))
+            .help("After the time is sent, move the task to its project's complete status in Moxie")
+
+            if markDone, pusher.mayNotifyClient(entry) {
+                Label("Client may be notified: a client portal user is assigned to this task.", systemImage: "envelope.badge")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.onBreak)
+                Toggle("Complete it anyway", isOn: Binding(
+                    get: { entry.draft.confirmClientNotice == true },
+                    set: { value in
+                        var updated = entry
+                        updated.draft.confirmClientNotice = value ? true : nil
+                        history.update(updated)
+                    }
+                ))
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+            }
         }
     }
 
@@ -252,14 +318,8 @@ struct ReviewView: View {
     private func sendOne(_ entry: LoggedEntry) async {
         sendingIds.insert(entry.id)
         defer { sendingIds.remove(entry.id) }
-        do {
-            try await timer.send(entry)
-            result = "Sent \(DurationFormat.short(entry.duration)) for \(entry.draft.client?.name ?? "entry") to Moxie." + (timer.notice.map { " " + $0 } ?? "")
-        } catch {
-            var held = entry
-            held.sendError = error.localizedDescription
-            history.update(held)
-        }
+        let outcome = await pusher.push(entry)
+        result = outcome.summary.map { $0 + (timer.notice.map { " " + $0 } ?? "") }
     }
 
     /// Held entries per day, with gaps against everything logged that day (held or already sent).
@@ -285,12 +345,8 @@ struct ReviewView: View {
     }
 
     private func send() async {
-        let outcome = await timer.sendPending()
-        var parts: [String] = []
-        if outcome.sent > 0 { parts.append("Sent \(outcome.sent) to Moxie") }
-        if outcome.failed > 0 { parts.append("\(outcome.failed) failed (see the red notes)") }
-        if outcome.skipped > 0 { parts.append("\(outcome.skipped) still need a client") }
-        result = parts.isEmpty ? nil : parts.joined(separator: " · ") + "."
+        let outcome = await pusher.pushAll()
+        result = outcome.summary
         if let notice = timer.notice { result = (result ?? "") + " " + notice }
     }
 }

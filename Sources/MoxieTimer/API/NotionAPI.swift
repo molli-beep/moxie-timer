@@ -55,6 +55,15 @@ struct NotionAPI: Sendable {
             ((properties[property] as? [String: Any])?["relation"] as? [[String: Any]])?.compactMap { $0["id"] as? String } ?? []
         }
 
+        /// A number, or the number a formula or rollup works out to.
+        func number(_ property: String) -> Double? {
+            guard let prop = properties[property] as? [String: Any] else { return nil }
+            if let value = prop["number"] as? Double { return value }
+            if let value = (prop["formula"] as? [String: Any])?["number"] as? Double { return value }
+            if let value = (prop["rollup"] as? [String: Any])?["number"] as? Double { return value }
+            return nil
+        }
+
         func dateStart(_ property: String) -> String? {
             ((properties[property] as? [String: Any])?["date"] as? [String: Any])?["start"] as? String
         }

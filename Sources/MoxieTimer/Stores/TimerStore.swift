@@ -32,8 +32,9 @@ final class TimerStore {
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let history: HistoryStore
     @ObservationIgnored private let storageKey = "timerState"
-    /// Called once an entry has reached Moxie, so the Notion mirror can follow.
-    @ObservationIgnored var onEntrySent: (() -> Void)?
+    /// Called once an entry has reached Moxie, so the Notion mirror can follow. Review pushes mirror
+    /// themselves after completing tasks, so they send with `notify: false`.
+    @ObservationIgnored var onEntrySent: ((LoggedEntry) -> Void)?
 
     init(settings: AppSettings, history: HistoryStore) {
         self.settings = settings
@@ -162,8 +163,6 @@ final class TimerStore {
         settings.holdForReview || draft.client != nil
     }
 
-    private(set) var isSending = false
-
     var holdsForReview: Bool { settings.holdForReview }
 
     /// The project most recently logged for a client, to prefill work that has no project (tickets).
@@ -187,7 +186,7 @@ final class TimerStore {
 
     /// Pushes one entry to Moxie and marks it sent.
     @discardableResult
-    func send(_ entry: LoggedEntry, isNew: Bool = false) async throws -> LoggedEntry {
+    func send(_ entry: LoggedEntry, isNew: Bool = false, notify: Bool = true) async throws -> LoggedEntry {
         guard let api = settings.makeAPI(), settings.isConfigured else { throw LogError.notConfigured }
         guard let client = entry.draft.client else { throw LogError.missingClientOrProject }
         guard entry.end > entry.start else { throw LogError.invalidRange }
@@ -228,37 +227,13 @@ final class TimerStore {
         sent.pending = nil
         sent.sendError = nil
         if isNew { history.add(sent) } else { history.update(sent) }
-        onEntrySent?()
+        if notify { onEntrySent?(sent) }
         return sent
     }
 
     /// Ids made up on this Mac (`local-…`) mean nothing to Moxie; those records go by name only.
     private static func moxieId(_ id: String) -> String? {
         id.isEmpty || id.hasPrefix("local-") ? nil : id
-    }
-
-    /// Sends every held entry that has a client and project. Failures stay held with their error.
-    func sendPending() async -> (sent: Int, failed: Int, skipped: Int) {
-        guard !isSending else { return (0, 0, 0) }
-        isSending = true
-        defer { isSending = false }
-        var sent = 0, failed = 0, skipped = 0
-        for entry in history.pending {
-            guard entry.hasCategory else {
-                skipped += 1
-                continue
-            }
-            do {
-                try await send(entry)
-                sent += 1
-            } catch {
-                var held = entry
-                held.sendError = error.localizedDescription
-                history.update(held)
-                failed += 1
-            }
-        }
-        return (sent, failed, skipped)
     }
 
     private func persist() {

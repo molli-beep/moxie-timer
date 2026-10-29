@@ -85,6 +85,7 @@ final class AppModel {
     let pet: PetStore
     let calls: CallDetector
     let notion: NotionSync
+    let pusher: ReviewPusher
 
     private init() {
         settings = AppSettings()
@@ -113,6 +114,10 @@ final class AppModel {
         // A finished task or a logged entry reaches Notion within seconds, not at the next scheduled sync.
         focus.onTaskChanged = { notion.requestSoon() }
         focus.onStatusChosen = { id, status in notion.setStatus(taskId: id, status: status) }
-        timer.onEntrySent = { notion.requestSoon() }
+        pusher = ReviewPusher(timer: timer, inbox: inbox, history: history, notion: notion)
+        timer.onEntrySent = { entry in
+            notion.mirror(entry, completedTask: false)
+            notion.requestSoon()
+        }
     }
 }

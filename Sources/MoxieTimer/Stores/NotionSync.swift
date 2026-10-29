@@ -42,7 +42,26 @@ final class NotionSync {
         var entries: [String: String] = [:]
         /// Moxie task id → Notion status chosen at finish time, written on the next sync.
         var statusOverrides: [String: String] = [:]
+        /// Pushes whose Notion mirror hasn't gone through yet. Optional so files from older versions decode.
+        var queue: [MirrorJob]?
     }
+
+    /// One pushed entry to mirror: its Time Tracker row, and the task's totals, status and ClickUp id.
+    struct MirrorJob: Codable, Hashable {
+        var entryId: String
+        var taskId: String?
+        var taskName: String?
+        /// The task was moved to its complete status in Moxie during this push.
+        var completed: Bool
+        var clickUpTaskId: String?
+        var attempts: Int = 0
+        var lastError: String?
+    }
+
+    /// Mirrors waiting for a retry after Notion failed (Moxie already has the data). Shown in the menu bar.
+    private(set) var waitingCount = 0
+    private(set) var waitingError: String?
+    @ObservationIgnored private var isMirroring = false
 
     /// Remembers a status the user chose when finishing a task; the next sync writes it to Notion
     /// even where the sync would otherwise leave the status alone.
@@ -67,6 +86,7 @@ final class NotionSync {
         if let data = try? Data(contentsOf: fileURL), let saved = try? JSONDecoder().decode(Links.self, from: data) {
             links = saved
         }
+        refreshQueueState()
         schedule()
         log("launch: enabled=\(settings.notionEnabled) token=\(settings.makeNotion() != nil) moxie=\(settings.isConfigured) configured=\(settings.notionIsConfigured)")
         if settings.notionIsConfigured {
@@ -127,7 +147,7 @@ final class NotionSync {
     // MARK: Sync
 
     func sync(userInitiated: Bool) async {
-        guard state != .syncing else { return }
+        guard state != .syncing, !isMirroring else { return }
         guard let notion = settings.makeNotion(), let moxie = settings.makeAPI() else {
             if userInitiated { state = .failed("Add the Notion token (and your Moxie key) in Settings first.") }
             return
@@ -148,6 +168,7 @@ final class NotionSync {
             summary = counts.description
             state = .idle
             log("sync done: \(counts.description)")
+            await drainQueue()
         } catch {
             persist()
             state = .failed(error.localizedDescription)
@@ -272,6 +293,9 @@ final class NotionSync {
     // MARK: Tasks
 
     private enum TaskFields {
+        static let timeUsed = "Time Used (in Minutes)"
+        static let timeTracker = "Time Tracker"
+        static let clickUpId = "Rachel - Clickup Task ID"
         static let name = "Task name"
         static let status = "Status"
         static let due = "Due date"
@@ -423,6 +447,144 @@ final class NotionSync {
             counts.entries += 1
             await pace()
         }
+    }
+
+    // MARK: Mirror after a push
+
+    /// Mirrors one entry that has just reached Moxie (and, when `completedTask`, whose task Moxie has just
+    /// completed). Never called before Moxie succeeds. Runs straight away; if Notion fails, the job stays in
+    /// the queue and is retried on the next sync or from "Retry Notion now".
+    func mirror(_ entry: LoggedEntry, completedTask: Bool) {
+        guard settings.notionIsConfigured else { return }
+        let clickUp = entry.draft.currentTaskMeta?.clickUpURL.flatMap { URL(string: $0) }
+        let job = MirrorJob(entryId: entry.id, taskId: entry.draft.task?.id, taskName: entry.draft.task?.name,
+                            completed: completedTask, clickUpTaskId: MoxieTask.clickUpTaskId(from: clickUp))
+        var queue = links.queue ?? []
+        if let index = queue.firstIndex(where: { $0.entryId == job.entryId }) {
+            queue[index].completed = queue[index].completed || job.completed
+            queue[index].clickUpTaskId = queue[index].clickUpTaskId ?? job.clickUpTaskId
+        } else {
+            queue.append(job)
+        }
+        links.queue = queue
+        persist()
+        refreshQueueState()
+        Task { await drainQueue() }
+    }
+
+    /// Runs every queued mirror job in order. Jobs that fail stay queued with their error.
+    func drainQueue() async {
+        guard !isMirroring, state != .syncing, settings.notionIsConfigured, let notion = settings.makeNotion(),
+              !(links.queue ?? []).isEmpty else { return }
+        isMirroring = true
+        defer {
+            isMirroring = false
+            refreshQueueState()
+        }
+        for job in links.queue ?? [] {
+            do {
+                try await run(job, notion: notion)
+                links.queue?.removeAll { $0.entryId == job.entryId }
+                log("mirrored entry \(job.entryId) (task \(job.taskId ?? "none")\(job.completed ? ", done" : ""))")
+            } catch {
+                if let index = links.queue?.firstIndex(where: { $0.entryId == job.entryId }) {
+                    links.queue?[index].attempts += 1
+                    links.queue?[index].lastError = error.localizedDescription
+                }
+                log("mirror failed for entry \(job.entryId): \(error.localizedDescription)")
+            }
+            persist()
+        }
+    }
+
+    private func refreshQueueState() {
+        let queue = links.queue ?? []
+        waitingCount = queue.count
+        waitingError = queue.compactMap(\.lastError).first
+    }
+
+    private func run(_ job: MirrorJob, notion: NotionAPI) async throws {
+        // Time without a Moxie task has no task row to update; Notion only tracks time per task.
+        guard let taskId = job.taskId, !taskId.hasPrefix("local-"),
+              let entry = history.entries.first(where: { $0.id == job.entryId }) else { return }
+        let taskPage = try await upsertTaskPage(taskId: taskId, name: job.taskName ?? entry.draft.task?.name ?? "Untitled task",
+                                                completed: job.completed, notion: notion)
+
+        // The entry's Time Tracker row, once.
+        var newRow: (id: String, minutes: Double)?
+        let minutes = (entry.duration / 60).rounded()
+        if links.entries[entry.id] == nil, minutes >= 1 {
+            let id = try await notion.createPage(dataSource: settings.notionTimeDB, properties: timeRowProperties(entry, taskName: job.taskName, taskPage: taskPage))
+            links.entries[entry.id] = id
+            persist()
+            newRow = (id, minutes)
+            await pace()
+        }
+
+        // Totals come from every Time Tracker row on the task, so a retry never counts an entry twice.
+        let rows = try await notion.queryAll(
+            dataSource: settings.notionTimeDB,
+            filter: ["property": TimeFields.task, "relation": ["contains": taskPage]]
+        )
+        var ids = rows.map(\.id)
+        var total = rows.reduce(0) { $0 + ($1.number(TimeFields.minutes) ?? 0) }
+        if let newRow, !ids.contains(newRow.id) {
+            // Notion's query can lag a moment behind a page it just created.
+            ids.append(newRow.id)
+            total += newRow.minutes
+        }
+        var properties: [String: Any] = [
+            TaskFields.timeUsed: NotionAPI.number(total),
+            TaskFields.timeTracker: NotionAPI.relation(ids),
+        ]
+        if job.completed {
+            // Moxie's complete statuses (Done, Delivered…) are all "Done" in the planner.
+            properties[TaskFields.status] = NotionAPI.status("Done")
+            links.statusOverrides[taskId] = nil
+        }
+        if let clickUp = job.clickUpTaskId {
+            properties[TaskFields.clickUpId] = NotionAPI.richText(clickUp)
+        }
+        try await notion.updatePage(taskPage, properties: properties)
+        await pace()
+    }
+
+    /// The task's Notion page, found by "Moxie Task ID" (so there's never a second row), or created.
+    private func upsertTaskPage(taskId: String, name: String, completed: Bool, notion: NotionAPI) async throws -> String {
+        let found = try await notion.queryAll(
+            dataSource: settings.notionTasksDB,
+            filter: ["property": TaskFields.moxieId, "rich_text": ["equals": taskId]]
+        )
+        if let page = found.first {
+            links.tasks[taskId] = .init(page: page.id, fingerprint: links.tasks[taskId]?.fingerprint ?? "")
+            return page.id
+        }
+        let properties: [String: Any] = [
+            TaskFields.name: NotionAPI.title(name),
+            TaskFields.moxieId: NotionAPI.richText(taskId),
+            TaskFields.status: NotionAPI.status(completed ? "Done" : "To Do"),
+            TaskFields.owner: NotionAPI.select("Molli"),
+        ]
+        let id = try await notion.createPage(dataSource: settings.notionTasksDB, properties: properties)
+        // An empty fingerprint makes the next full sync fill in due date, project and client.
+        links.tasks[taskId] = .init(page: id, fingerprint: "")
+        persist()
+        await pace()
+        return id
+    }
+
+    private func timeRowProperties(_ entry: LoggedEntry, taskName: String?, taskPage: String) -> [String: Any] {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        let name = taskName ?? entry.draft.task?.name ?? "Time"
+        return [
+            TimeFields.name: NotionAPI.title("\(name) · \(formatter.string(from: entry.start))"),
+            TimeFields.start: NotionAPI.date(entry.start, time: true),
+            TimeFields.end: NotionAPI.date(entry.end, time: true),
+            TimeFields.minutes: NotionAPI.number((entry.duration / 60).rounded()),
+            TimeFields.task: NotionAPI.relation([taskPage]),
+        ]
     }
 
     // MARK: Helpers
