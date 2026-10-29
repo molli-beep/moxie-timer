@@ -168,6 +168,9 @@ final class TimerStore {
                 clientName: client.name,
                 projectName: entry.draft.project?.name,
                 deliverableName: entry.draft.task?.name,
+                clientId: Self.moxieId(client.id),
+                projectId: entry.draft.project.flatMap { Self.moxieId($0.id) },
+                deliverableId: entry.draft.task.flatMap { Self.moxieId($0.id) },
                 notes: entry.draft.composedNotes,
                 userEmail: settings.userEmail.trimmingCharacters(in: .whitespaces),
                 billable: billable
@@ -196,6 +199,11 @@ final class TimerStore {
         if isNew { history.add(sent) } else { history.update(sent) }
         onEntrySent?()
         return sent
+    }
+
+    /// Ids made up on this Mac (`local-…`) mean nothing to Moxie; those records go by name only.
+    private static func moxieId(_ id: String) -> String? {
+        id.isEmpty || id.hasPrefix("local-") ? nil : id
     }
 
     /// Sends every held entry that has a client and project. Failures stay held with their error.

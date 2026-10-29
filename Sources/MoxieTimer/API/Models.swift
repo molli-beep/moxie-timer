@@ -190,6 +190,9 @@ struct MoxieUser: Decodable, Hashable {
     }
 }
 
+/// `POST timeWorked/create`. Ids win over names on Moxie's side (`deliverableId` is the task id), so a task
+/// is linked even when its name has changed or isn't unique. Names are kept as a fallback for records that
+/// only exist locally (a task captured offline has a `local-…` id).
 struct TimeEntryRequest: Encodable {
     let timerStart: String
     let timerEnd: String
@@ -197,10 +200,13 @@ struct TimeEntryRequest: Encodable {
     /// Optional: Moxie only requires the start and end times.
     let projectName: String?
     let deliverableName: String?
+    var clientId: String? = nil
+    var projectId: String? = nil
+    /// The Moxie task id.
+    var deliverableId: String? = nil
     let notes: String?
     let userEmail: String
-    /// Not in the documented request schema; Moxie's TimerEvent has a `billable` field, so we send it and
-    /// check the response to see whether it was applied.
+    /// Defaults to true in Moxie; project billing rules still apply.
     let billable: Bool?
 }
 
