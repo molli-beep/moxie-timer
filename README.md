@@ -87,6 +87,48 @@ More detail:
 - **Project suggestions:** the app learns which apps (and, with Accessibility permission, which window titles) go with
   which client or project, and suggests them. The learned data stays in a local file.
 
+## Tasks, review and the Notion mirror
+
+Every minute should land on a Moxie task, so the timer asks for one up front.
+
+- **Pick a task when you start.** Press play and a picker opens: due today and overdue first, then tasks you used
+  recently, then everything else. Type to search by task, client or project. **No task** is allowed, and review
+  flags that time so you can attach one later.
+- **Switch mid-session.** Use **Switch** in the Timer tab, **Switch Task…** in the menu bar, or **Switch task** on a
+  check-in. The time so far is saved as its own entry and a new one starts on the new task.
+- **Review & send.** Every held entry shows its client, project, task and duration. Entries with no task are
+  highlighted; click one to attach a task. Tick **Mark task done** on any entry whose task is finished.
+- **Client notifications.** Moxie can email assignees when a task changes. If a client portal user is assigned
+  (Moxie gives them a negative id), review warns that the client may be notified and needs a second tick before it
+  completes the task.
+- **Order of writes.** On send, the app writes the time entry to Moxie with its task id, then moves ticked tasks to
+  their project type's complete status, then mirrors to Notion. If Moxie fails, nothing goes to Notion. If Notion
+  fails after Moxie succeeds, the update waits in a retry queue (the menu bar shows ⟳ and a count, with
+  **Retry Notion Now**).
+- **Complete statuses.** Each Moxie project type has its own status ids. The app looks up the complete status from
+  Moxie's task stages and caches it for a day in `~/Library/Application Support/MoxieTimer/task-statuses.json`. The
+  `seed` entries in that file are only a fallback when Moxie can't answer, and you can edit them.
+- **What Notion gets.** The task row is found by **Moxie Task ID** (created if it's missing, so there are no
+  duplicates). The app sets **Time Used (in Minutes)** from all linked Time Tracker rows, the **Time Tracker**
+  relation, **Status** = Done when Moxie completed the task, and **Rachel - Clickup Task ID** when the Moxie
+  description has a ClickUp link. Other Notion statuses are left alone unless Moxie changed them.
+
+### Showing and hiding the widget
+
+- **⌃⌥M** shows or hides the widget from anywhere (**⌃⌥Space** still captures a task).
+- The menu bar shows the running time and the task, with Open Review, Switch Task, Start/Stop and Show/Hide.
+- **Settings → Hide the widget while a timer runs** (off by default) hides it once a timer is running and its card
+  is closed. It comes back on ⌃⌥M or when you stop the timer.
+- The widget remembers where you put it and whether it was hidden.
+
+### ClickUp is handled by Make, not this app
+
+Rachel (Community by Design) works in ClickUp. Her tasks reach Moxie through a separate Make scenario that looks
+them up by ClickUp id and adds a `ClickUp: <url>` line to the Moxie description. This app only reads that line to
+show a **ClickUp** badge and fill the Notion field. It never calls ClickUp and never creates ClickUp-linked tasks.
+If a ClickUp task needs closing when it's finished in Moxie, build that in Make (for example, watch for Moxie tasks
+moving to a complete status and close the matching ClickUp task).
+
 ## Insights
 
 <img src="docs/images/insights.png" alt="The Insights tab: tracked and focus hours, wins and time per client" width="100%">
