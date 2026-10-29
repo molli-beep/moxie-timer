@@ -56,6 +56,11 @@ final class AppSettings {
         didSet { defaults.set(showOnAllSpaces, forKey: "showOnAllSpaces"); onWindowPreferencesChange?() }
     }
 
+    /// Hide the widget while a timer runs (the menu bar keeps the time); it comes back on ⌃⌥M or when stopped.
+    var autoHideWhileRunning: Bool {
+        didSet { defaults.set(autoHideWhileRunning, forKey: "autoHideWhileRunning") }
+    }
+
     /// Collapse the open card when clicking anywhere outside the widget.
     var closeOnOutsideClick: Bool {
         didSet { defaults.set(closeOnOutsideClick, forKey: "closeOnOutsideClick") }
@@ -208,6 +213,7 @@ final class AppSettings {
         keepOnTop = defaults.object(forKey: "keepOnTop") as? Bool ?? true
         showOnAllSpaces = defaults.object(forKey: "showOnAllSpaces") as? Bool ?? true
         closeOnOutsideClick = defaults.object(forKey: "closeOnOutsideClick") as? Bool ?? true
+        autoHideWhileRunning = defaults.object(forKey: "autoHideWhileRunning") as? Bool ?? false
         holdForReview = defaults.object(forKey: "holdForReview") as? Bool ?? true
         reviewMinutes = defaults.object(forKey: "reviewMinutes") as? Int ?? 17 * 60 + 30
         trackingReminders = defaults.object(forKey: "trackingReminders") as? Bool ?? true

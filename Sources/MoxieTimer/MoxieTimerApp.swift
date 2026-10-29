@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 @main
@@ -22,6 +23,7 @@ struct MoxieTimerApp: App {
                 .environment(model.timer)
                 .environment(model.clock)
                 .environment(model.focus)
+                .environment(model.notion)
         }
     }
 }
@@ -31,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var breakOverlay: BreakOverlayController?
     private var nudgePrompt: NudgePromptController?
     private var captureHotKey: HotKey?
+    private var toggleHotKey: HotKey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -87,11 +90,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSSound(named: "Purr")?.play()
             }
 
-            captureHotKey = HotKey { [weak panel] in
+            captureHotKey = HotKey(id: 1) { [weak panel] in
                 MainActor.assumeIsolated {
                     panel?.setVisible(true)
                     model.ui.expand(route: .capture)
                 }
+            }
+            toggleHotKey = HotKey(id: 2, keyCode: UInt32(kVK_ANSI_M)) { [weak panel] in
+                MainActor.assumeIsolated { panel?.toggleVisible() }
             }
         }
     }
@@ -109,23 +115,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// The menu bar readout: the running time and the task it's for, so the widget can stay hidden.
+/// A "⟳" marks Notion updates waiting to be retried.
 private struct MenuBarLabel: View {
     @Environment(TimerStore.self) private var timer
     @Environment(Clock.self) private var clock
-
     @Environment(FocusStore.self) private var focus
+    @Environment(NotionSync.self) private var notion
 
     var body: some View {
         if let block = focus.block, block.isWorking {
             let remaining = Int(block.remaining(at: clock.now).rounded(.up))
-            Text("◎ " + String(format: "%d:%02d", remaining / 60, remaining % 60) + (block.pausedAt == nil ? "" : " ⏸"))
+            Text("◎ " + String(format: "%d:%02d", remaining / 60, remaining % 60) + (block.pausedAt == nil ? "" : " ⏸")
+                 + taskSuffix + retrySuffix)
                 .monospacedDigit()
         } else if let session = timer.session {
-            Text(DurationFormat.clock(session.elapsed(at: clock.now)) + (session.isRunning ? "" : " ⏸"))
+            Text(DurationFormat.clock(session.elapsed(at: clock.now)) + (session.isRunning ? "" : " ⏸") + taskSuffix + retrySuffix)
                 .monospacedDigit()
+        } else if notion.waitingCount > 0 {
+            Text("⏱" + retrySuffix)
         } else {
             Image(systemName: "stopwatch")
         }
+    }
+
+    private var taskSuffix: String {
+        guard let name = timer.draft.task?.name ?? timer.draft.client?.name else { return " · No task" }
+        return " · " + (name.count > 24 ? String(name.prefix(23)) + "…" : name)
+    }
+
+    private var retrySuffix: String {
+        notion.waitingCount > 0 ? "  ⟳\(notion.waitingCount)" : ""
     }
 }
 
@@ -140,13 +160,18 @@ private struct MenuBarMenu: View {
     @Environment(AppSettings.self) private var settings
 
     var body: some View {
-        if !history.pending.isEmpty {
-            Button("Review & Send (\(history.pending.count))…") {
-                delegate.panelController?.setVisible(true)
-                ui.expand(route: .review)
-            }
-            Divider()
+        Button(history.pending.isEmpty ? "Open Review…" : "Review & Send (\(history.pending.count))…") {
+            delegate.panelController?.setVisible(true)
+            ui.expand(route: .review)
         }
+        if notion.waitingCount > 0 {
+            Text("Notion: \(notion.waitingCount) update\(notion.waitingCount == 1 ? "" : "s") waiting to retry")
+            if let error = notion.waitingError {
+                Text(error.count > 80 ? String(error.prefix(79)) + "…" : error)
+            }
+            Button("Retry Notion Now") { Task { await notion.drainQueue() } }
+        }
+        Divider()
         if let release = updater.latest {
             Button("Install Update \(release.version)…") {
                 delegate.panelController?.setVisible(true)
@@ -155,7 +180,15 @@ private struct MenuBarMenu: View {
             Divider()
         }
         if let session = timer.session {
+            if let task = timer.draft.task {
+                Text("On: \(task.name)")
+            }
             Button(session.isRunning ? "Pause" : "Resume") { timer.toggle() }
+            Button("Switch Task…") {
+                delegate.panelController?.setVisible(true)
+                ui.tab = .timer
+                ui.expand(route: .pickTask)
+            }
             Button("Stop & Save") {
                 if !timer.canSaveCurrent {
                     delegate.panelController?.setVisible(true)
@@ -198,8 +231,8 @@ private struct MenuBarMenu: View {
         }
         Toggle("I'm in a Call", isOn: Binding(get: { calls.inCall }, set: { if $0 != calls.inCall { calls.toggle() } }))
             .help("Pauses breaks and nudges while the timer keeps tracking. Calls using the microphone are detected automatically.")
-        Button("Show / Hide Widget") {
-            delegate.panelController?.setVisible(!(delegate.panelController?.isVisible ?? false))
+        Button("Show / Hide Widget  (\(HotKey.toggleDescription))") {
+            delegate.panelController?.toggleVisible()
         }
         Button("Reset Widget Position") {
             delegate.panelController?.setVisible(true)

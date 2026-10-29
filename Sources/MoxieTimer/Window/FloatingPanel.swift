@@ -38,6 +38,11 @@ final class PanelController {
     private var anchor: NSPoint
     private var contentSize = CGSize(width: 320, height: 80)
     private let anchorKey = "panelAnchor"
+    private let hiddenKey = "panelHidden"
+    /// Hidden by "hide while a timer runs" rather than by the user; stopping the timer brings it back.
+    private var autoHidden = false
+    private var wasRunning = false
+    private var wasExpanded = false
 
     init(model: AppModel) {
         self.model = model
@@ -78,7 +83,12 @@ final class PanelController {
         model.ui.onVisibilityRequest = { [weak self] visible in self?.setVisible(visible) }
         applyPreferences()
         layout()
-        panel.orderFrontRegardless()
+        // Come back the way the user left it; setup needs the widget, so it shows until Moxie is connected.
+        if !UserDefaults.standard.bool(forKey: hiddenKey) || !model.settings.isConfigured {
+            panel.orderFrontRegardless()
+        }
+        wasExpanded = model.ui.expanded
+        observeAutoHide()
 
         // Clicks that go to other apps (desktop, Finder, browser…) close the open card, like a popover.
         // Global mouse monitors don't need Accessibility permission; clicks in our own windows aren't reported here.
@@ -98,12 +108,59 @@ final class PanelController {
     var isVisible: Bool { panel.isVisible }
 
     func setVisible(_ visible: Bool) {
+        autoHidden = false
+        UserDefaults.standard.set(!visible, forKey: hiddenKey)
         if visible {
             panel.orderFrontRegardless()
         } else {
             model.ui.collapse()
             panel.orderOut(nil)
         }
+    }
+
+    func toggleVisible() {
+        setVisible(!panel.isVisible)
+    }
+
+    // MARK: Hide while a timer runs
+
+    /// Re-arms after every change to the timer, the card or the setting.
+    private func observeAutoHide() {
+        withObservationTracking {
+            _ = model.timer.session
+            _ = model.ui.expanded
+            _ = model.settings.autoHideWhileRunning
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.applyAutoHide()
+                    self?.observeAutoHide()
+                }
+            }
+        }
+        applyAutoHide()
+    }
+
+    /// Hides when a timer starts running or its card is closed while it runs, so the start picker and
+    /// anything opened on purpose stay on screen. Brings the widget back when the timer is stopped.
+    private func applyAutoHide() {
+        let running = model.timer.session?.isRunning == true
+        let expanded = model.ui.expanded
+        defer {
+            wasRunning = running
+            wasExpanded = expanded
+        }
+        if model.timer.session == nil, autoHidden {
+            autoHidden = false
+            panel.orderFrontRegardless()
+            return
+        }
+        guard model.settings.autoHideWhileRunning, running, !expanded, panel.isVisible else { return }
+        let justStarted = !wasRunning
+        let justClosed = wasExpanded
+        guard justStarted || justClosed else { return }
+        autoHidden = true
+        panel.orderOut(nil)
     }
 
     func applyPreferences() {
