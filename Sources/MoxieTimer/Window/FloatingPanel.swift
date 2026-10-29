@@ -132,10 +132,7 @@ final class PanelController {
             _ = model.settings.autoHideWhileRunning
         } onChange: { [weak self] in
             DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.applyAutoHide()
-                    self?.observeAutoHide()
-                }
+                MainActor.assumeIsolated { self?.observeAutoHide() }
             }
         }
         applyAutoHide()

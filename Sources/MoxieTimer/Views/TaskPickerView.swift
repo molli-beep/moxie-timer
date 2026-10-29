@@ -8,6 +8,7 @@ struct TaskPickerView: View {
     @Environment(TimerStore.self) private var timer
     @Environment(HistoryStore.self) private var history
     @Environment(WidgetUI.self) private var ui
+    @Environment(FocusStore.self) private var focus
 
     @State private var query = ""
     @State private var working = false
@@ -195,6 +196,14 @@ struct TaskPickerView: View {
         working = true
         Task {
             defer { working = false }
+            if focus.block != nil {
+                // A focus block is running: let Focus end it and save its time, then keep timing the new task.
+                await focus.select(task)
+                guard focus.lastError == nil else { return }
+                if timer.session == nil { timer.start() }
+                close()
+                return
+            }
             var draft = EntryDraft(task: task, billable: timer.draft.billable)
             // Keep notes typed for the work in progress when it's the same work, not when switching.
             if timer.draft.task?.id == task.id { draft.notes = timer.draft.notes }
