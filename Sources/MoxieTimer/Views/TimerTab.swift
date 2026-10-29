@@ -5,6 +5,7 @@ struct TimerTab: View {
     @Environment(FocusStore.self) private var focus
     @Environment(WidgetUI.self) private var ui
     @Environment(Clock.self) private var clock
+    @Environment(AppSettings.self) private var settings
 
     @State private var durationText = ""
     @FocusState private var durationFocused: Bool
@@ -170,7 +171,11 @@ struct TimerTab: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                Button { Task { await timer.stopAndSave() } } label: {
+                Button {
+                    if !ui.beginStop(timer: timer, focus: focus, settings: settings) {
+                        Task { await timer.stopAndSave() }
+                    }
+                } label: {
                     HStack(spacing: 8) {
                         if timer.isSaving {
                             ProgressView().controlSize(.small).tint(.white)

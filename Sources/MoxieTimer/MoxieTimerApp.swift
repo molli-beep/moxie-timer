@@ -172,6 +172,7 @@ private struct MenuBarLabel: View {
 private struct MenuBarMenu: View {
     let delegate: AppDelegate
     @Environment(TimerStore.self) private var timer
+    @Environment(FocusStore.self) private var focus
     @Environment(WidgetUI.self) private var ui
     @Environment(Updater.self) private var updater
     @Environment(HistoryStore.self) private var history
@@ -210,7 +211,9 @@ private struct MenuBarMenu: View {
                 ui.expand(route: .pickTask)
             }
             Button("Stop & Save") {
-                if !timer.canSaveCurrent {
+                if ui.beginStop(timer: timer, focus: focus, settings: settings) {
+                    // The widget opens on "Do you want to mark this as done?".
+                } else if !timer.canSaveCurrent {
                     delegate.panelController?.setVisible(true)
                     ui.tab = .timer
                     ui.expand()

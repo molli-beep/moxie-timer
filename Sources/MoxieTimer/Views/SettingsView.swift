@@ -111,6 +111,7 @@ struct SettingsView: View {
                     Text(problem).font(.system(size: 11)).foregroundStyle(Theme.onBreak)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                Toggle("Ask “mark this as done?” when I stop a timer on a task", isOn: $settings.askDoneOnStop)
                 Toggle("Hide the widget while a timer runs (\(settings.toggleHotKey.label) or stopping brings it back)",
                        isOn: $settings.autoHideWhileRunning)
                 Toggle("Close the card when I click outside it", isOn: $settings.closeOnOutsideClick)

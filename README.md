@@ -96,6 +96,10 @@ Every minute should land on a Moxie task, so the timer asks for one up front.
   flags that time so you can attach one later.
 - **Switch mid-session.** Use **Switch** in the Timer tab, **Switch Task…** in the menu bar, or **Switch task** on a
   check-in. The time so far is saved as its own entry and a new one starts on the new task.
+- **"Do you want to mark this as done?"** Stopping a timer that's on a task asks first (the time is frozen while it
+  asks). **Yes, mark done** saves the entry with "Mark task done" ticked, so it's completed in Moxie when you send
+  it from review (or right after the time, if review is off). **Not yet** saves the time and leaves the task open.
+  **Keep timing** carries on. Turn it off in Settings.
 - **Review & send.** Every held entry shows its client, project, task and duration. Entries with no task are
   highlighted; click one to attach a task. Tick **Mark task done** on any entry whose task is finished.
 - **Client notifications.** Moxie can email assignees when a task changes. If a client portal user is assigned

@@ -56,6 +56,11 @@ final class AppSettings {
         didSet { defaults.set(showOnAllSpaces, forKey: "showOnAllSpaces"); onWindowPreferencesChange?() }
     }
 
+    /// Stopping a timer that's on a task asks "Do you want to mark this as done?".
+    var askDoneOnStop: Bool {
+        didSet { defaults.set(askDoneOnStop, forKey: "askDoneOnStop") }
+    }
+
     /// HotKey.Toggle raw value for showing/hiding the widget.
     var toggleShortcut: String {
         didSet { defaults.set(toggleShortcut, forKey: "toggleShortcut"); onHotKeyChange?() }
@@ -223,6 +228,7 @@ final class AppSettings {
         showOnAllSpaces = defaults.object(forKey: "showOnAllSpaces") as? Bool ?? true
         closeOnOutsideClick = defaults.object(forKey: "closeOnOutsideClick") as? Bool ?? true
         autoHideWhileRunning = defaults.object(forKey: "autoHideWhileRunning") as? Bool ?? false
+        askDoneOnStop = defaults.object(forKey: "askDoneOnStop") as? Bool ?? true
         toggleShortcut = defaults.string(forKey: "toggleShortcut") ?? HotKey.Toggle.ctrlOptM.rawValue
         holdForReview = defaults.object(forKey: "holdForReview") as? Bool ?? true
         reviewMinutes = defaults.object(forKey: "reviewMinutes") as? Int ?? 17 * 60 + 30

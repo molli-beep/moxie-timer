@@ -96,6 +96,8 @@ final class TimerStore {
         lastError = nil
         draft.notes = ""
         draft.ticket = nil
+        draft.markTaskDone = nil
+        draft.confirmClientNotice = nil
     }
 
     /// Puts the timer on `newDraft`. Time already tracked against something (a task or client) is stopped and
@@ -136,9 +138,11 @@ final class TimerStore {
         start()
     }
 
-    /// Freezes the timer and pushes it to Moxie. On failure the session stays (paused) so nothing is lost.
-    func stopAndSave() async {
-        guard var current = session, !isSaving else { return }
+    /// Freezes the timer and pushes it to Moxie (or holds it for review). Returns the saved entry. On failure
+    /// the session stays (paused) so nothing is lost.
+    @discardableResult
+    func stopAndSave() async -> LoggedEntry? {
+        guard var current = session, !isSaving else { return nil }
         let now = Date.now
         current.pause(at: now)
         session = current
@@ -146,13 +150,18 @@ final class TimerStore {
         isSaving = true
         defer { isSaving = false }
         do {
-            _ = try await log(start: current.start(at: now), end: current.end(at: now), draft: draft)
+            let entry = try await log(start: current.start(at: now), end: current.end(at: now), draft: draft)
             session = nil
             draft.notes = ""
             draft.ticket = nil
+            // "Mark done" belongs to the entry just saved, never to the next one.
+            draft.markTaskDone = nil
+            draft.confirmClientNotice = nil
             lastError = nil
+            return entry
         } catch {
             lastError = error.localizedDescription
+            return nil
         }
     }
 

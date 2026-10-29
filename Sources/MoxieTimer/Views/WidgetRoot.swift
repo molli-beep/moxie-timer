@@ -135,7 +135,9 @@ struct PillBar: View {
                         }
                     }
                     pillButton("stop.fill", filled: true, help: "Stop & save") {
-                        if !timer.canSaveCurrent {
+                        if ui.beginStop(timer: timer, focus: focus, settings: pillSettings) {
+                            // Asks "Do you want to mark this as done?" first.
+                        } else if !timer.canSaveCurrent {
                             ui.tab = .timer
                             ui.expand()
                             timer.lastError = LogError.missingClientOrProject.localizedDescription
@@ -250,6 +252,8 @@ struct ExpandedCard: View {
                 ReviewView()
             } else if ui.route == .pickTask {
                 TaskPickerView()
+            } else if ui.route == .stopPrompt {
+                StopPromptView()
             } else {
                 VStack(spacing: 0) {
                     UpdateBanner()

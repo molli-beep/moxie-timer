@@ -20,7 +20,7 @@ final class Clock {
 @MainActor @Observable
 final class WidgetUI {
     enum Tab { case focus, timer, recent, insights, pet }
-    enum Route { case settings, addEntry, tasks, capture, review, pickTask }
+    enum Route { case settings, addEntry, tasks, capture, review, pickTask, stopPrompt }
 
     /// How the entry editor should open: blank, prefilled with a time range (filling a gap), or editing a held entry.
     struct EditorSeed {
@@ -61,6 +61,16 @@ final class WidgetUI {
 
     func toggle() {
         expanded ? collapse() : expand()
+    }
+
+    /// Stop pressed: when the timer is on a task, freeze the time and ask whether the task is done.
+    /// Returns false when there's nothing to ask, so the caller stops the usual way.
+    func beginStop(timer: TimerStore, focus: FocusStore, settings: AppSettings) -> Bool {
+        guard settings.askDoneOnStop, timer.session != nil, timer.draft.task != nil, timer.canSaveCurrent else { return false }
+        if focus.block?.isWorking == true { focus.pauseBlock() } else { timer.pause() }
+        onVisibilityRequest?(true)
+        expand(route: .stopPrompt)
+        return true
     }
 }
 

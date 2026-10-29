@@ -43,9 +43,33 @@ final class ReviewPusher {
 
     /// Whether completing this entry's task may email a client (a client portal user is assigned).
     func mayNotifyClient(_ entry: LoggedEntry) -> Bool {
-        guard let task = entry.draft.task else { return false }
+        mayNotifyClient(entry.draft)
+    }
+
+    func mayNotifyClient(_ draft: EntryDraft) -> Bool {
+        guard let task = draft.task else { return false }
         if let live = inbox.task(id: task.id) { return live.hasClientPortalAssignee }
-        return entry.draft.currentTaskMeta?.hasClientPortalAssignee ?? false
+        return draft.currentTaskMeta?.hasClientPortalAssignee ?? false
+    }
+
+    /// For an entry that went straight to Moxie on stop (review is off): completes its task now, after the
+    /// time, then mirrors the Done status to Notion. Returns a message when the task wasn't completed.
+    func completeAfterStop(_ entry: LoggedEntry) async -> String? {
+        guard entry.draft.markTaskDone == true, let ref = entry.draft.task else { return nil }
+        if mayNotifyClient(entry), entry.draft.confirmClientNotice != true {
+            return "“\(ref.name)” wasn't marked done: it needs the second tick (the client may be notified)."
+        }
+        await prepare([entry])
+        guard let task = completable(ref, draft: entry.draft) else {
+            return "Couldn't tell the project type of “\(ref.name)”, so it wasn't marked done. Reload tasks and try again."
+        }
+        do {
+            guard try await inbox.markComplete(task) else { return "Moxie didn't confirm “\(ref.name)” as done." }
+        } catch {
+            return "“\(ref.name)” wasn't marked done: \(error.localizedDescription)"
+        }
+        notion.mirror(entry, completedTask: true)
+        return nil
     }
 
     func push(_ entry: LoggedEntry) async -> Outcome {
