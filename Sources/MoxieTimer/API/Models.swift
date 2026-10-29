@@ -128,6 +128,34 @@ extension MoxieTask {
     }
 }
 
+extension MoxieTask {
+    /// Rachel's ClickUp tasks reach Moxie through a Make scenario that adds a "ClickUp: <url>" line to the
+    /// description. The app only reads it (for a badge and the Notion field); it never talks to ClickUp.
+    var clickUpURL: URL? { Self.clickUpURL(in: description) }
+
+    static func clickUpURL(in text: String?) -> URL? {
+        guard let text, !text.isEmpty else { return nil }
+        // Descriptions are HTML, so the URL may sit inside a link tag after the label.
+        let pattern = #"ClickUp:\s*(?:<[^>]*>\s*)*(https?://[^\s<>"']+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        let raw = String(text[range]).replacingOccurrences(of: "&amp;", with: "&")
+        return URL(string: raw)
+    }
+
+    /// The ClickUp task id is the last path component (`…/t/86abc123` or `…/t/<team>/CUSTOM-12`).
+    static func clickUpTaskId(from url: URL?) -> String? {
+        guard let last = url?.pathComponents.last, last != "/", !last.isEmpty else { return nil }
+        return last
+    }
+
+    /// Moxie gives client portal users negative ids. Updating such a task can email the client.
+    var hasClientPortalAssignee: Bool {
+        (assignedToList ?? []).contains { $0 < 0 }
+    }
+}
+
 struct MoxieTaskStage: Decodable, Hashable {
     let id: String
     let label: String?
@@ -223,6 +251,17 @@ struct Ref: Codable, Hashable {
     var name: String
 }
 
+/// What the app knew about a task when it was picked, so review can complete it without another lookup.
+/// Only trusted while `taskId` still matches the draft's task.
+struct TaskMeta: Codable, Hashable {
+    var taskId: String
+    var projectTypeId: String?
+    var assignees: [Int]?
+    var clickUpURL: String?
+
+    var hasClientPortalAssignee: Bool { (assignees ?? []).contains { $0 < 0 } }
+}
+
 /// What the time is being logged against.
 struct EntryDraft: Codable, Hashable {
     var client: Ref?
@@ -232,6 +271,39 @@ struct EntryDraft: Codable, Hashable {
     var notes: String = ""
     /// Optional so drafts saved by older versions still decode; `nil` means billable.
     var billable: Bool? = true
+    /// Set by the task picker; nil for drafts from older versions or tasks picked in the field editor.
+    var taskMeta: TaskMeta? = nil
+    /// "Mark task done" ticked in review: completing the task in Moxie rides along with the push.
+    var markTaskDone: Bool? = nil
+    /// Second tick for tasks with a client portal assignee, who may be emailed about the change.
+    var confirmClientNotice: Bool? = nil
+
+    /// Meta for the current task, ignoring meta left over from a task picked earlier.
+    var currentTaskMeta: TaskMeta? {
+        guard let task, let taskMeta, taskMeta.taskId == task.id else { return nil }
+        return taskMeta
+    }
+
+    /// Everything needed to log time against an open Moxie task.
+    init(task: MoxieTask, billable: Bool? = true) {
+        client = task.clientRef
+        project = task.projectRef
+        self.task = Ref(id: task.id, name: task.name)
+        self.billable = billable
+        taskMeta = TaskMeta(taskId: task.id, projectTypeId: task.projectTypeId, assignees: task.assignedToList,
+                            clickUpURL: task.clickUpURL?.absoluteString)
+    }
+
+    init(client: Ref? = nil, project: Ref? = nil, task: Ref? = nil, ticket: Ref? = nil, notes: String = "",
+         billable: Bool? = true, taskMeta: TaskMeta? = nil) {
+        self.client = client
+        self.project = project
+        self.task = task
+        self.ticket = ticket
+        self.notes = notes
+        self.billable = billable
+        self.taskMeta = taskMeta
+    }
 
     var isBillable: Bool {
         get { billable ?? true }
@@ -263,7 +335,7 @@ struct EntryDraft: Codable, Hashable {
 
     /// Same client/project/task, fresh notes — used when starting again from a past entry.
     var reusable: EntryDraft {
-        EntryDraft(client: client, project: project, task: task, ticket: ticket, notes: "", billable: billable)
+        EntryDraft(client: client, project: project, task: task, ticket: ticket, notes: "", billable: billable, taskMeta: currentTaskMeta)
     }
 }
 
@@ -284,6 +356,8 @@ struct LoggedEntry: Codable, Identifiable, Hashable {
     var isPending: Bool { pending == true }
     /// Ready to send: a client is enough; project, task and ticket are optional.
     var hasCategory: Bool { draft.client != nil }
+    /// Time with no Moxie task never shows up against a task; review flags it.
+    var hasTask: Bool { draft.task != nil }
     var duration: TimeInterval { end.timeIntervalSince(start) }
     /// Billable state as Moxie stored it, falling back to what was requested.
     var isBillable: Bool { moxieBillable ?? draft.isBillable }

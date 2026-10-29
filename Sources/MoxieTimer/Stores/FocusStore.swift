@@ -146,6 +146,7 @@ final class FocusStore {
         } else {
             draft.project = task.projectRef
             draft.task = Ref(id: task.id, name: task.name)
+            draft.taskMeta = EntryDraft(task: task).taskMeta
             draft.ticket = nil
         }
         target = FocusTarget(

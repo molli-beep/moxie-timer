@@ -16,6 +16,8 @@ final class TaskInbox {
     }
 
     @ObservationIgnored private let settings: AppSettings
+    /// Complete status per project type, looked up from Moxie and cached.
+    @ObservationIgnored let statuses = TaskStatusCache()
     @ObservationIgnored private var myUserId: Int?
     @ObservationIgnored private var myUserEmail: String?
 
@@ -212,14 +214,16 @@ final class TaskInbox {
     func markComplete(_ task: MoxieTask) async throws -> Bool {
         guard let api = settings.makeAPI() else { throw LogError.notConfigured }
         guard !task.id.hasPrefix("local-") else { throw UpdateError("This task hasn't synced with Moxie yet.") }
-        let stages = try await api.taskStages(projectTypeId: task.projectTypeId)
-        guard let done = stages.first(where: { $0.complete == true }) else {
-            throw UpdateError("Couldn't find a “complete” stage for this project in Moxie.")
-        }
+        let done = try await statuses.completeStatus(projectTypeId: task.projectTypeId, api: api)
         let updated = try await api.updateTask(id: task.id, fields: ["statusId": done.id])
         tasks.removeAll { $0.id == task.id }
         guard let updated else { return true }
         return updated.statusId == done.id || !(updated.completed ?? "").isEmpty
+    }
+
+    /// An open task by id, from the last load.
+    func task(id: String) -> MoxieTask? {
+        tasks.first { $0.id == id }
     }
 
     private func resolveMe(_ api: MoxieAPI) async {

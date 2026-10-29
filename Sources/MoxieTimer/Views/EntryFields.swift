@@ -52,7 +52,13 @@ struct EntryFields: View {
                     disabled: draft.project == nil,
                     onOpen: { if let p = draft.project { await catalog.loadTasks(for: p) } },
                     onRefresh: { if let p = draft.project { await catalog.loadTasks(for: p, force: true) } },
-                    onSelect: { task in draft.task = task.map { Ref(id: $0.id, name: $0.name) } }
+                    onSelect: { task in
+                        draft.task = task.map { Ref(id: $0.id, name: $0.name) }
+                        draft.taskMeta = task.map {
+                            TaskMeta(taskId: $0.id, projectTypeId: $0.projectTypeId, assignees: $0.assignedToList,
+                                     clickUpURL: $0.clickUpURL?.absoluteString)
+                        }
+                    }
                 )
             }
             row("Ticket", onAdd: { addingTicket = true }, adding: $addingTicket, form: { NewTicketForm(draft: $draft) { addingTicket = false } }) {
