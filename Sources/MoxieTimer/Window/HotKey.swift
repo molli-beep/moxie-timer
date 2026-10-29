@@ -10,8 +10,38 @@ final class HotKey {
 
     /// Default capture shortcut: ⌃⌥Space.
     static let captureDescription = "⌃⌥Space"
-    /// Show/hide the widget: ⌃⌥M.
-    static let toggleDescription = "⌃⌥M"
+
+    /// Shortcuts offered for showing/hiding the widget. macOS refuses a combination another app has already
+    /// registered, so there's more than one to choose from.
+    enum Toggle: String, CaseIterable, Identifiable {
+        case ctrlOptM, ctrlOptH, ctrlOptW, ctrlOptCmdM
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .ctrlOptM: return "⌃⌥M"
+            case .ctrlOptH: return "⌃⌥H"
+            case .ctrlOptW: return "⌃⌥W"
+            case .ctrlOptCmdM: return "⌃⌥⌘M"
+            }
+        }
+
+        var keyCode: UInt32 {
+            switch self {
+            case .ctrlOptM, .ctrlOptCmdM: return UInt32(kVK_ANSI_M)
+            case .ctrlOptH: return UInt32(kVK_ANSI_H)
+            case .ctrlOptW: return UInt32(kVK_ANSI_W)
+            }
+        }
+
+        var modifiers: UInt32 {
+            switch self {
+            case .ctrlOptCmdM: return UInt32(controlKey | optionKey | cmdKey)
+            default: return UInt32(controlKey | optionKey)
+            }
+        }
+    }
 
     init?(id: UInt32 = 1, keyCode: UInt32 = UInt32(kVK_Space), modifiers: UInt32 = UInt32(controlKey | optionKey),
           action: @escaping () -> Void) {

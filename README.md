@@ -115,7 +115,9 @@ Every minute should land on a Moxie task, so the timer asks for one up front.
 
 ### Showing and hiding the widget
 
-- **⌃⌥M** shows or hides the widget from anywhere (**⌃⌥Space** still captures a task).
+- **⌃⌥M** shows or hides the widget from anywhere (**⌃⌥Space** still captures a task). If another app already
+  uses ⌃⌥M, macOS won't let the app have it: the menu bar and Settings say so, and **Settings → Show / hide widget
+  shortcut** offers ⌃⌥H, ⌃⌥W or ⌃⌥⌘M instead.
 - The menu bar shows the running time and the task, with Open Review, Switch Task, Start/Stop and Show/Hide.
 - **Settings → Hide the widget while a timer runs** (off by default) hides it once a timer is running and its card
   is closed. It comes back on ⌃⌥M or when you stop the timer.

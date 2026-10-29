@@ -96,10 +96,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     model.ui.expand(route: .capture)
                 }
             }
-            toggleHotKey = HotKey(id: 2, keyCode: UInt32(kVK_ANSI_M)) { [weak panel] in
-                MainActor.assumeIsolated { panel?.toggleVisible() }
-            }
+            registerToggleHotKey()
+            model.settings.onHotKeyChange = { [weak self] in MainActor.assumeIsolated { self?.registerToggleHotKey() } }
         }
+    }
+
+    /// (Re)registers the show/hide shortcut from Settings. macOS refuses a combination another app already
+    /// owns; that's reported in the menu and Settings instead of failing silently.
+    @MainActor
+    private func registerToggleHotKey() {
+        let model = AppModel.shared
+        let choice = model.settings.toggleHotKey
+        toggleHotKey = nil
+        toggleHotKey = HotKey(id: 2, keyCode: choice.keyCode, modifiers: choice.modifiers) { [weak self] in
+            MainActor.assumeIsolated { self?.panelController?.toggleVisible() }
+        }
+        var problems: [String] = []
+        if toggleHotKey == nil {
+            problems.append("\(choice.label) is already used by another app. Pick another show/hide shortcut in Settings.")
+            NSLog("MoxieTimer: couldn't register %@ for show/hide", choice.label)
+        }
+        if captureHotKey == nil {
+            problems.append("\(HotKey.captureDescription) (capture) is already used by another app.")
+        }
+        model.ui.hotKeyProblem = problems.isEmpty ? nil : problems.joined(separator: " ")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -231,8 +251,11 @@ private struct MenuBarMenu: View {
         }
         Toggle("I'm in a Call", isOn: Binding(get: { calls.inCall }, set: { if $0 != calls.inCall { calls.toggle() } }))
             .help("Pauses breaks and nudges while the timer keeps tracking. Calls using the microphone are detected automatically.")
-        Button("Show / Hide Widget  (\(HotKey.toggleDescription))") {
+        Button("Show / Hide Widget  (\(settings.toggleHotKey.label))") {
             delegate.panelController?.toggleVisible()
+        }
+        if let problem = ui.hotKeyProblem {
+            Text("⚠︎ " + problem)
         }
         Button("Reset Widget Position") {
             delegate.panelController?.setVisible(true)

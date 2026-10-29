@@ -99,7 +99,19 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Keep widget above other windows", isOn: $settings.keepOnTop)
                 Toggle("Show on every Space & full-screen app", isOn: $settings.showOnAllSpaces)
-                Toggle("Hide the widget while a timer runs (\(HotKey.toggleDescription) or stopping brings it back)",
+                HStack(spacing: 8) {
+                    Text("Show / hide widget shortcut")
+                    Picker("", selection: $settings.toggleShortcut) {
+                        ForEach(HotKey.Toggle.allCases) { choice in Text(choice.label).tag(choice.rawValue) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                if let problem = ui.hotKeyProblem {
+                    Text(problem).font(.system(size: 11)).foregroundStyle(Theme.onBreak)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Toggle("Hide the widget while a timer runs (\(settings.toggleHotKey.label) or stopping brings it back)",
                        isOn: $settings.autoHideWhileRunning)
                 Toggle("Close the card when I click outside it", isOn: $settings.closeOnOutsideClick)
                 Toggle("Open at login", isOn: $settings.launchAtLogin)

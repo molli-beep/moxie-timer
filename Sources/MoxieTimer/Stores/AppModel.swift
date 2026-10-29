@@ -42,6 +42,8 @@ final class WidgetUI {
     var captureSeed: CaptureSeed?
     /// Set when play is pressed: the Timer tab asks "What are you working on?" until a choice is made.
     var askWhatNow = false
+    /// Why a global shortcut couldn't be registered (another app already uses it), shown in the menu and Settings.
+    var hotKeyProblem: String?
     /// Set by the panel controller; shows/hides the floating widget.
     @ObservationIgnored var onVisibilityRequest: ((Bool) -> Void)?
 

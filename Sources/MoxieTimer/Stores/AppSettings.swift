@@ -56,6 +56,15 @@ final class AppSettings {
         didSet { defaults.set(showOnAllSpaces, forKey: "showOnAllSpaces"); onWindowPreferencesChange?() }
     }
 
+    /// HotKey.Toggle raw value for showing/hiding the widget.
+    var toggleShortcut: String {
+        didSet { defaults.set(toggleShortcut, forKey: "toggleShortcut"); onHotKeyChange?() }
+    }
+    /// Called when the show/hide shortcut changes so it can be registered again.
+    @ObservationIgnored var onHotKeyChange: (() -> Void)?
+
+    var toggleHotKey: HotKey.Toggle { HotKey.Toggle(rawValue: toggleShortcut) ?? .ctrlOptM }
+
     /// Hide the widget while a timer runs (the menu bar keeps the time); it comes back on ⌃⌥M or when stopped.
     var autoHideWhileRunning: Bool {
         didSet { defaults.set(autoHideWhileRunning, forKey: "autoHideWhileRunning") }
@@ -214,6 +223,7 @@ final class AppSettings {
         showOnAllSpaces = defaults.object(forKey: "showOnAllSpaces") as? Bool ?? true
         closeOnOutsideClick = defaults.object(forKey: "closeOnOutsideClick") as? Bool ?? true
         autoHideWhileRunning = defaults.object(forKey: "autoHideWhileRunning") as? Bool ?? false
+        toggleShortcut = defaults.string(forKey: "toggleShortcut") ?? HotKey.Toggle.ctrlOptM.rawValue
         holdForReview = defaults.object(forKey: "holdForReview") as? Bool ?? true
         reviewMinutes = defaults.object(forKey: "reviewMinutes") as? Int ?? 17 * 60 + 30
         trackingReminders = defaults.object(forKey: "trackingReminders") as? Bool ?? true
