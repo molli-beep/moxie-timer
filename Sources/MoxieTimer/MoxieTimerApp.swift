@@ -34,6 +34,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+
+        // `MoxieTimer --dry-run-subprojects <moxie project id>` prints what the Notion sync would link each
+        // task of that project to, then exits. Nothing is written. Run it from Terminal against the
+        // installed app: /Applications/MoxieTimer.app/Contents/MacOS/MoxieTimer --dry-run-subprojects <id>
+        let arguments = CommandLine.arguments
+        if let flag = arguments.firstIndex(of: "--dry-run-subprojects"), flag + 1 < arguments.count {
+            let projectId = arguments[flag + 1]
+            MainActor.assumeIsolated {
+                let notion = AppModel.shared.notion
+                notion.suspend()
+                Task { @MainActor in
+                    print(await notion.dryRunSubProjects(projectId: projectId))
+                    exit(0)
+                }
+            }
+            return
+        }
+
         MainActor.assumeIsolated {
             let model = AppModel.shared
             let panel = PanelController(model: model)

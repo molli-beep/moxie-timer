@@ -138,9 +138,9 @@ final class NotionSync {
             var counts = Counts()
             let clientPages = try await loadClientPages(notion)
             log("clients: \(clientPages.count) Notion client names")
-            let projectPages = try await syncProjects(notion: notion, moxie: moxie, clientPages: clientPages, counts: &counts)
-            log("projects: \(projectPages.count) linked (\(counts.projectsCreated) created, \(counts.projectsUpdated) updated)")
-            let taskPages = try await syncTasks(notion: notion, moxie: moxie, clientPages: clientPages, projectPages: projectPages, counts: &counts)
+            let projects = try await syncProjects(notion: notion, moxie: moxie, clientPages: clientPages, counts: &counts)
+            log("projects: \(projects.pageByMoxieId.count) linked (\(counts.projectsCreated) created, \(counts.projectsUpdated) updated)")
+            let taskPages = try await syncTasks(notion: notion, moxie: moxie, clientPages: clientPages, projects: projects, counts: &counts)
             log("tasks: \(taskPages.count) linked (\(counts.tasksCreated) created, \(counts.tasksUpdated) updated)")
             try await syncTimeEntries(notion: notion, taskPages: taskPages, counts: &counts)
             persist()
@@ -216,25 +216,101 @@ final class NotionSync {
         static let clients = "🤝 Clients"
         static let moxieId = "Moxie Project ID"
         static let area = "Area"
+        /// Self-relation: a sub-project page points at its parent project page.
+        static let parent = "Parent project"
     }
 
-    /// Returns Moxie project id → Notion page id for every project seen.
-    private func syncProjects(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], counts: inout Counts) async throws -> [String: String] {
+    /// The Moxie custom field (a select on tasks) whose options are the sub-project page titles.
+    static let subProjectField = "Sub-project"
+
+    /// What one sync run knows about Notion's 💫 Projects, built from a single query so no task costs
+    /// an extra lookup.
+    struct ProjectIndex {
+        /// Moxie project id → page id, only for ids that appear on exactly one page.
+        var pageByMoxieId: [String: String] = [:]
+        /// Moxie project ids that appear on more than one page, with those pages' titles.
+        var duplicates: [String: [String]] = [:]
+        /// Parent page id → (lower-cased, trimmed sub-project title → page id).
+        var subProjects: [String: [String: String]] = [:]
+        /// Page id → title, for messages.
+        var titles: [String: String] = [:]
+        /// Every page with a Moxie Project ID, by that id (all of them, duplicates included).
+        var pagesByMoxieId: [String: [NotionAPI.Page]] = [:]
+        /// Lower-cased title → first page with it, for matching projects never synced before.
+        var pageByTitle: [String: NotionAPI.Page] = [:]
+    }
+
+    private static func key(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    static func buildProjectIndex(_ pages: [NotionAPI.Page]) -> ProjectIndex {
+        var index = ProjectIndex()
+        for page in pages {
+            let title = page.text(ProjectFields.name) ?? "Untitled"
+            index.titles[page.id] = title
+            if index.pageByTitle[key(title)] == nil { index.pageByTitle[key(title)] = page }
+            if let id = page.text(ProjectFields.moxieId)?.trimmingCharacters(in: .whitespaces), !id.isEmpty {
+                index.pagesByMoxieId[id, default: []].append(page)
+            }
+            for parent in page.relationIds(ProjectFields.parent) {
+                index.subProjects[parent, default: [:]][key(title)] = page.id
+            }
+        }
+        for (id, pages) in index.pagesByMoxieId {
+            if pages.count == 1 {
+                index.pageByMoxieId[id] = pages[0].id
+            } else {
+                index.duplicates[id] = pages.map { index.titles[$0.id] ?? $0.id }
+            }
+        }
+        return index
+    }
+
+    /// Which 💫 Projects page a task's Related Project should point at: its sub-project page when the
+    /// task's "Sub-project" names one under the parent, else the parent. `note` explains a fallback.
+    struct ProjectLink {
+        var page: String?
+        var title: String?
+        var note: String?
+    }
+
+    static func resolveProject(for task: MoxieTask, in index: ProjectIndex) -> ProjectLink {
+        guard let projectId = task.projectRef?.id ?? task.projectId else {
+            return ProjectLink(note: "no Moxie project on the task")
+        }
+        if let titles = index.duplicates[projectId] {
+            return ProjectLink(note: "Moxie project \(projectId) is on \(titles.count) Notion pages (\(titles.joined(separator: ", "))); Related Project left alone")
+        }
+        guard let parent = index.pageByMoxieId[projectId] else {
+            return ProjectLink(note: "no Notion page carries Moxie Project ID \(projectId)")
+        }
+        let parentTitle = index.titles[parent]
+        guard let sub = task.customValue(named: subProjectField) else {
+            return ProjectLink(page: parent, title: parentTitle)
+        }
+        if let page = index.subProjects[parent]?[key(sub)] {
+            return ProjectLink(page: page, title: index.titles[page])
+        }
+        return ProjectLink(page: parent, title: parentTitle,
+                           note: "Sub-project “\(sub)” has no page under “\(parentTitle ?? parent)”; linked to the parent")
+    }
+
+    /// Returns the project index, updated with any pages this run created.
+    private func syncProjects(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], counts: inout Counts) async throws -> ProjectIndex {
         let existing = try await notion.queryAll(dataSource: settings.notionProjectsDB)
-        var byMoxieId: [String: NotionAPI.Page] = [:]
-        var byName: [String: NotionAPI.Page] = [:]
-        for page in existing {
-            if let id = page.text(ProjectFields.moxieId)?.trimmingCharacters(in: .whitespaces), !id.isEmpty { byMoxieId[id] = page }
-            if let name = page.text(ProjectFields.name)?.lowercased(), byName[name] == nil { byName[name] = page }
+        var index = Self.buildProjectIndex(existing)
+        for (id, titles) in index.duplicates {
+            log("warning: Moxie project \(id) is on \(titles.count) Notion pages (\(titles.joined(separator: ", "))); neither is updated and its tasks keep their Related Project")
         }
 
         let clients = try await moxie.clients()
-        var result: [String: String] = [:]
         for client in clients {
             guard let projects = try? await moxie.projects(clientName: client.name) else { continue }
             let clientPage = clientPage(named: client.name, in: clientPages)
             for project in projects {
-                let page = byMoxieId[project.id] ?? byName[project.name.lowercased()]
+                if index.duplicates[project.id] != nil { continue }
+                let page = index.pagesByMoxieId[project.id]?.first ?? index.pageByTitle[Self.key(project.name)]
                 var properties: [String: Any] = [
                     ProjectFields.name: NotionAPI.title(project.name),
                     ProjectFields.moxieId: NotionAPI.richText(project.id),
@@ -254,19 +330,62 @@ final class NotionSync {
                         await pace()
                     }
                     links.projects[project.id] = .init(page: page.id, fingerprint: fingerprint)
-                    result[project.id] = page.id
+                    index.pageByMoxieId[project.id] = page.id
+                    if index.titles[page.id] == nil { index.titles[page.id] = project.name }
                 } else if project.isActive {
                     properties[ProjectFields.status] = NotionAPI.status("Active")
                     properties[ProjectFields.area] = NotionAPI.select("Client work")
                     let id = try await notion.createPage(dataSource: settings.notionProjectsDB, properties: properties)
                     counts.projectsCreated += 1
                     links.projects[project.id] = .init(page: id, fingerprint: Self.fingerprint(properties))
-                    result[project.id] = id
+                    index.pageByMoxieId[project.id] = id
+                    index.titles[id] = project.name
                     await pace()
                 }
             }
         }
-        return result
+        return index
+    }
+
+    // MARK: Dry run
+
+    /// For every top-level task in one Moxie project: its name, its Sub-project value and the Notion
+    /// project page it would be linked to. Reads only; nothing is written anywhere.
+    func dryRunSubProjects(projectId: String) async -> String {
+        guard let notion = settings.makeNotion(), let moxie = settings.makeAPI() else {
+            return "Not configured: add the Moxie key and the Notion token in Settings first."
+        }
+        do {
+            let index = Self.buildProjectIndex(try await notion.queryAll(dataSource: settings.notionProjectsDB))
+            let tasks = try await moxie.allTasks().filter { ($0.projectRef?.id ?? $0.projectId) == projectId && $0.isSubTask != true }
+            var lines = ["Dry run · Moxie project \(projectId) · \(tasks.count) task\(tasks.count == 1 ? "" : "s")"]
+            if let parent = index.pageByMoxieId[projectId] {
+                let subs = index.subProjects[parent]?.values.compactMap { index.titles[$0] }.sorted() ?? []
+                lines.append("Parent page: \(index.titles[parent] ?? parent) · sub-projects: \(subs.isEmpty ? "none" : subs.joined(separator: ", "))")
+            } else if let titles = index.duplicates[projectId] {
+                lines.append("Parent page: AMBIGUOUS, \(titles.count) pages carry this Moxie Project ID: \(titles.joined(separator: ", "))")
+            } else {
+                lines.append("Parent page: none carries this Moxie Project ID")
+            }
+            lines.append("")
+            for task in tasks.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) {
+                let link = Self.resolveProject(for: task, in: index)
+                var line = "• \(task.name)\(task.isOpen ? "" : " (done)")\n    Sub-project: \(task.customValue(named: Self.subProjectField) ?? "—")\n    → \(link.title ?? "no change")"
+                if let note = link.note { line += "\n    ⚠︎ \(note)" }
+                lines.append(line)
+            }
+            return lines.joined(separator: "\n")
+        } catch {
+            return "Dry run failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Stops the periodic and pending syncs (used by the dry-run command so it exits without writing).
+    func suspend() {
+        timer?.invalidate()
+        timer = nil
+        pending?.cancel()
+        pending = nil
     }
 
     // MARK: Tasks
@@ -286,7 +405,8 @@ final class NotionSync {
     }
 
     /// Returns Moxie task id → Notion page id for every synced task.
-    private func syncTasks(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], projectPages: [String: String], counts: inout Counts) async throws -> [String: String] {
+    private func syncTasks(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], projects: ProjectIndex, counts: inout Counts) async throws -> [String: String] {
+        var warned: Set<String> = []
         let existing = try await notion.queryAll(
             dataSource: settings.notionTasksDB,
             filter: ["property": TaskFields.moxieId, "rich_text": ["is_not_empty": true]]
@@ -312,8 +432,14 @@ final class NotionSync {
             if let text = task.description?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                 properties[TaskFields.description] = NotionAPI.richText(Self.plainText(text))
             }
-            if let projectId = task.projectRef?.id ?? task.projectId, let projectPage = projectPages[projectId] {
-                properties[TaskFields.project] = NotionAPI.relation([projectPage])
+            // Related Project: the sub-project page when the task's "Sub-project" names one, else the parent.
+            // Runs on every update too, so changing the field in Moxie moves the task in Notion.
+            let link = Self.resolveProject(for: task, in: projects)
+            if let page = link.page {
+                properties[TaskFields.project] = NotionAPI.relation([page])
+            }
+            if let note = link.note, warned.insert(note).inserted {
+                log("warning: \(note) (task “\(task.name)”)")
             }
             if let clientPage = clientPage(named: task.clientRef?.name, in: clientPages) {
                 properties[TaskFields.clients] = NotionAPI.relation([clientPage])
