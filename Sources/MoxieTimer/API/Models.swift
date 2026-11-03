@@ -44,10 +44,49 @@ struct MoxieTask: Codable, Identifiable, Hashable {
     var completed: String? = nil
     var archived: Bool? = nil
     var isSubTask: Bool? = nil
+    /// Custom field values (e.g. the "Sub-project" select). Moxie names the field on each value.
+    var customValues: [CustomValue]? = nil
     /// Set when this inbox item stands for a Moxie ticket rather than a task.
     var sourceTicketId: String? = nil
 
     var isTicket: Bool { sourceTicketId != nil }
+
+    /// A custom field's value, found by its name (case-insensitive) or mapping key, trimmed; nil when blank.
+    func customValue(named name: String) -> String? {
+        let wanted = name.trimmingCharacters(in: .whitespaces).lowercased()
+        let key = wanted.filter { $0.isLetter || $0.isNumber }
+        let match = customValues?.first {
+            ($0.fieldName ?? "").trimmingCharacters(in: .whitespaces).lowercased() == wanted
+                || ($0.mappingKey ?? "").lowercased() == key
+        }
+        let text = (match?.valueAsString ?? match?.value)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text?.isEmpty == false) ? text : nil
+    }
+
+    /// One entry of `customValues`. Every field is optional and tolerantly decoded; `value` keeps a
+    /// string form of whatever Moxie sent (string, number or bool).
+    struct CustomValue: Codable, Hashable {
+        var fieldId: String?
+        var fieldName: String?
+        var mappingKey: String?
+        var valueAsString: String?
+        var value: String?
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            fieldId = (try? c.decodeIfPresent(String.self, forKey: .fieldId)) ?? nil
+            fieldName = (try? c.decodeIfPresent(String.self, forKey: .fieldName)) ?? nil
+            mappingKey = (try? c.decodeIfPresent(String.self, forKey: .mappingKey)) ?? nil
+            valueAsString = (try? c.decodeIfPresent(String.self, forKey: .valueAsString)) ?? nil
+            if let text = try? c.decodeIfPresent(String.self, forKey: .value) {
+                value = text
+            } else if let number = try? c.decodeIfPresent(Double.self, forKey: .value) {
+                value = number == number.rounded() ? String(Int(number)) : String(number)
+            } else if let flag = try? c.decodeIfPresent(Bool.self, forKey: .value) {
+                value = flag ? "true" : "false"
+            }
+        }
+    }
 
     var isOpen: Bool { (completed ?? "").isEmpty && archived != true }
 
@@ -111,6 +150,7 @@ extension MoxieTask {
         created = value(.created)
         completed = value(.completed)
         archived = value(.archived)
+        customValues = value(.customValues)
         isSubTask = value(.isSubTask)
     }
 
