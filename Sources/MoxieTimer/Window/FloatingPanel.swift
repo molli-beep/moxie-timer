@@ -153,22 +153,58 @@ final class PanelController {
 
 // MARK: - Drag handle
 
+/// An NSMenuItem that runs a closure.
+private final class ClosureMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(title: String, action handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    @objc private func run() { handler() }
+}
+
+/// One item of a right-click menu on a drag area.
+struct DragAreaMenuItem {
+    let title: String
+    let action: () -> Void
+}
+
 /// Transparent AppKit view that drags the window, or reports a click if the mouse didn't move.
+/// With `menu`, right-clicking shows those items.
 struct WindowDragArea: NSViewRepresentable {
+    var menu: [DragAreaMenuItem] = []
     var onClick: () -> Void = {}
 
     func makeNSView(context: Context) -> DragView {
         let view = DragView()
         view.onClick = onClick
+        view.menuItems = menu
         return view
     }
 
     func updateNSView(_ view: DragView, context: Context) {
         view.onClick = onClick
+        view.menuItems = menu
     }
 
     final class DragView: NSView {
         var onClick: () -> Void = {}
+        var menuItems: [DragAreaMenuItem] = []
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            guard !menuItems.isEmpty else { return super.menu(for: event) }
+            let menu = NSMenu()
+            for item in menuItems {
+                menu.addItem(ClosureMenuItem(title: item.title, action: item.action))
+            }
+            return menu
+        }
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 

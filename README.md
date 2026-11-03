@@ -30,6 +30,7 @@ Click it and you get a card with everything you need: name the one thing, focus 
 Moxie when you're ready. It's built for people who lose track easily, ADHD brains included.
 
 - ⏱ **One-click timer:** start, pause and stop from the pill or the menu bar. A running timer survives quitting.
+  Right-click the pill to hide it; bring it back with **Show / Hide Widget** in the menu bar.
 - 🎯 **Focus mode:** type a task, link it to a client and project, press Enter and you're focused. One task at a
   time, a tiny first step, adaptive focus blocks and real breaks.
 - 🧾 **Time you can trust:** entries wait for your end-of-day review, with gap filling and "not tracking" reminders.

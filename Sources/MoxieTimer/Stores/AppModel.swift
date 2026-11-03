@@ -60,6 +60,12 @@ final class WidgetUI {
     func toggle() {
         expanded ? collapse() : expand()
     }
+
+    /// Hides the floating widget; the menu bar's Show / Hide Widget (or the capture hotkey) brings it back.
+    func hideWidget() {
+        collapse()
+        onVisibilityRequest?(false)
+    }
 }
 
 @MainActor
