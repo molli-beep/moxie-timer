@@ -113,6 +113,27 @@ final class AIService {
         return (number - 1, parts.count > 1 ? parts[1] : "")
     }
 
+    /// Which task (if any) the person's note describes. Returns the candidate's index, or nil for "none of these".
+    func matchTask(notes: String, candidates: [String]) async throws -> (index: Int, reason: String)? {
+        let numbered = candidates.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        let reply = try await generate(
+            instructions: """
+            Someone logged time with a short note. Decide which task from the list the note is about. Match on meaning, \
+            not exact words (e.g. "fixed the welcome emails" matches "Update onboarding email sequence"). If none clearly \
+            fits, answer 0. Reply on one line exactly as: <number>|<reason in under 10 words>
+            """,
+            prompt: "Note: \(notes)\nTasks (task — client · project):\n\(numbered)"
+        )
+        let line = reply.split(separator: "\n").map(String.init).first { $0.contains("|") && $0.contains(where: \.isNumber) }
+            ?? Self.firstLine(reply)
+        let parts = line.split(separator: "|", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let number = parts.first.flatMap({ Int($0.filter(\.isNumber)) }) else {
+            throw UpdateError("The AI reply didn't name a task.")
+        }
+        guard (1...candidates.count).contains(number) else { return nil }
+        return (number - 1, parts.count > 1 ? parts[1] : "")
+    }
+
     // MARK: Engines
 
     /// Runs on the enabled engines in the user's order. `preferring` is tried first even when it's switched off

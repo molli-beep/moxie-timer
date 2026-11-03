@@ -212,6 +212,7 @@ final class FocusStore {
     }
 
     func startBlock(minutes: Int, warmup: Bool? = nil) {
+        markInProgressIfNeeded()
         let length = TimeInterval(max(minutes, 5) * 60)
         let now = Date.now
         let useWarmup = (warmup ?? warmupEnabled) && length > Self.warmupLength
@@ -303,6 +304,38 @@ final class FocusStore {
     private(set) var lastFinished: FinishedTask?
     /// Called with (Moxie task id, status name) when the user picks a status at finish time.
     @ObservationIgnored var onStatusChosen: ((String, String) -> Void)?
+
+    /// Current status of a task (Notion's when known), for skipping a redundant "In progress".
+    @ObservationIgnored var statusOf: (String) -> String? = { _ in nil }
+    /// Whether starting a block should set the task to "In progress".
+    @ObservationIgnored var autoInProgress: () -> Bool = { false }
+    @ObservationIgnored private var markedInProgress: Set<String> = []
+
+    private func markInProgressIfNeeded() {
+        guard autoInProgress(), let target, let taskId = target.taskId, target.ticketId == nil,
+              !taskId.hasPrefix("local-"), !markedInProgress.contains(taskId) else { return }
+        markedInProgress.insert(taskId)
+        if statusOf(taskId)?.caseInsensitiveCompare("In progress") == .orderedSame { return }
+        Task { await setStatus("In progress", taskId: taskId, name: target.name, projectTypeId: target.projectTypeId, quiet: true) }
+    }
+
+    /// Sets a task's status without finishing it: Notion gets the status on the next sync (seconds away),
+    /// Moxie moves the task to the stage with the same name when its project type has one.
+    /// "Done" isn't handled here; it goes through `finish(outcome: .done)` or `complete(_:)`.
+    func setStatus(_ status: String, taskId: String, name: String, projectTypeId: String?, quiet: Bool = false) async {
+        onStatusChosen?(taskId, status)
+        let task = inbox.tasks.first { $0.id == taskId }
+            ?? MoxieTask(id: taskId, name: name, projectId: nil, status: nil, parentTaskId: nil, projectTypeId: projectTypeId)
+        var message = "“\(name)” → \(status)."
+        do {
+            let matched = try await inbox.setStage(task, label: status)
+            message += matched ? " Moxie updated ✓" : " (Moxie has no “\(status)” stage, so it stays as is there.)"
+        } catch {
+            if !quiet { lastError = "Notion will update, but Moxie didn't: \(error.localizedDescription)" }
+        }
+        if !quiet { banner = message }
+        if status.caseInsensitiveCompare("In progress") != .orderedSame { markedInProgress.remove(taskId) }
+    }
 
     func clearBanner() {
         banner = nil

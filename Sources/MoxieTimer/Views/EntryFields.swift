@@ -93,6 +93,8 @@ struct EntryFields: View {
                 }
             }
 
+            TaskSuggestionView(draft: $draft)
+
             if !labelled { Divider() }
             billableRow
 

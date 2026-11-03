@@ -30,6 +30,7 @@ Click it and you get a card with everything you need: name the one thing, focus 
 Moxie when you're ready. It's built for people who lose track easily, ADHD brains included.
 
 - ⏱ **One-click timer:** start, pause and stop from the pill or the menu bar. A running timer survives quitting.
+  Right-click the pill to hide it; bring it back with **Show / Hide Widget** in the menu bar.
 - 🎯 **Focus mode:** type a task, link it to a client and project, press Enter and you're focused. One task at a
   time, a tiny first step, adaptive focus blocks and real breaks.
 - 🧾 **Time you can trust:** entries wait for your end-of-day review, with gap filling and "not tracking" reminders.
@@ -66,6 +67,10 @@ More detail:
 - **Staying on task:** mark distracting apps and sites. Drift to one and the pill turns amber with "Back to: *task*",
   then a notification, then a prompt: **Back to it**, **Back, drop N min**, **Take a break** or **It's for work**.
   Optional check-ins ask "Still on *task*?" every 20 minutes.
+- **Status menu:** the dot next to a task (in Up next and on the focus card) sets To Do, In progress, Waiting on
+  Client, Ready for Approval and the rest without finishing it. Notion follows within seconds, and Moxie moves the
+  task to the stage with the same name when its project has one. Starting a focus block sets the task to
+  **In progress** (Settings → Notion to turn it off).
 - **Finish** saves the time and clears the task from Up next. Closing tasks and tickets in Moxie from the widget is
   opt-in (Settings → Focus).
 
@@ -76,6 +81,9 @@ More detail:
 - **Hold for review (default):** stopping keeps the entry on your Mac, so you can stop now and choose the client or
   project later. At your review time (default 17:30) **Review & send** shows held entries per day and the **untracked
   gaps** in your work hours, which you can fill with one click. Then everything goes to Moxie at once.
+- **"Is this the task?":** type what you did in Notes and the widget suggests the matching open Moxie task, so you
+  don't have to scroll the list. A clear word match is instant; otherwise your AI engine picks one. **Yes, link it**
+  fills in client, project and task; **No, another** suggests the next one.
 - **Edit as you go:** ±5/±15 minute nudges, and type a start time or a duration (`45m`, `1.5h`, `1:30`).
 - **Client → project → task → ticket** pickers load live from Moxie, with search and a Billable switch.
 - **Recent, week by week:** step back through past weeks with the arrows. The totals, the chart (focused part

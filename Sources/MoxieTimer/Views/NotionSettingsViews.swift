@@ -12,7 +12,7 @@ struct NotionSettingsSection: View {
 
         VStack(alignment: .leading, spacing: 8) {
             CapsLabel("Notion")
-            Text("Keeps your Notion Projects and Task Tracker in step with Moxie, and mirrors time logged here into the Time Tracker. Moxie is the source of truth; planning fields you add in Notion are never touched.")
+            Text("Keeps your Notion Projects and Task Tracker in step with Moxie, and mirrors time logged here into the Time Tracker. Moxie is the source of truth; planning fields you add in Notion are never touched, and a task you move to a sub-project in Notion stays there.")
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.faint)
                 .fixedSize(horizontal: false, vertical: true)
@@ -31,14 +31,16 @@ struct NotionSettingsSection: View {
 
             Toggle("Keep Notion up to date", isOn: $settings.notionEnabled)
             Toggle("Only tasks assigned to me (or unassigned)", isOn: $settings.notionOnlyMine)
+            Toggle("Set a task to “In progress” when I start focusing on it", isOn: $settings.autoInProgress)
+            Toggle("Suggest the matching task from what I type in Notes", isOn: $settings.suggestTaskFromNotes)
 
             VStack(alignment: .leading, spacing: 6) {
-                CapsLabel("Statuses offered at Finish")
+                CapsLabel("Task statuses")
                 FieldBox {
                     TextField(AppSettings.defaultFinishStatuses, text: $settings.finishStatuses)
                         .textFieldStyle(.plain)
                 }
-                Text("Comma-separated Notion status names, shown alongside Done and “Just save the time”. Moxie gets the same stage when the project has one with that name.")
+                Text("Comma-separated Notion status names. They're offered at Finish and in the status menu on every task (the dot next to it), along with To Do and Done. Moxie gets the same stage when the project has one with that name.")
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)

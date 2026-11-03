@@ -123,8 +123,8 @@ struct PillBar: View {
                 }
                 .padding(.leading, 12)
                 .padding(.vertical, 6)
-                .overlay(WindowDragArea { ui.toggle() })
-                .help("Click to open, drag to move")
+                .overlay(WindowDragArea(menu: [DragAreaMenuItem(title: "Hide Widget") { ui.hideWidget() }]) { ui.toggle() })
+                .help("Click to open, drag to move, right-click to hide")
 
                 if let session = timer.session {
                     pillButton(session.isRunning ? "pause.fill" : "play.fill", filled: false, help: session.isRunning ? "Pause" : "Resume") {
@@ -162,6 +162,10 @@ struct PillBar: View {
             .overlay(Capsule().strokeBorder(alerting ? Theme.onBreak : Theme.navy.opacity(0.35), lineWidth: alerting ? 1.5 : 1))
             .compositingGroup()
             .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+            // The time area has its own right-click menu (it's an AppKit drag view); this covers the buttons.
+            .contextMenu {
+                Button("Hide Widget") { ui.hideWidget() }
+            }
         }
     }
 
