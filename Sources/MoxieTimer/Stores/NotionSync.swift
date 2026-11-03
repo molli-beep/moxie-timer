@@ -20,6 +20,8 @@ final class NotionSync {
     private(set) var summary: String?
     /// Last connection test result, for Settings.
     var testResult: (text: String, isError: Bool)?
+    /// Moxie task id → its Notion status, as last seen in a sync or just chosen in the widget.
+    private(set) var statuses: [String: String] = [:]
 
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let history: HistoryStore
@@ -42,12 +44,15 @@ final class NotionSync {
         var entries: [String: String] = [:]
         /// Moxie task id → Notion status chosen at finish time, written on the next sync.
         var statusOverrides: [String: String] = [:]
+        /// Moxie task id → Notion status last seen, so the widget can show it between syncs.
+        var statuses: [String: String]? = nil
     }
 
     /// Remembers a status the user chose when finishing a task; the next sync writes it to Notion
     /// even where the sync would otherwise leave the status alone.
     func setStatus(taskId: String, status: String) {
         links.statusOverrides[taskId] = status
+        statuses[taskId] = status
         persist()
         requestSoon(after: 3)
     }
@@ -66,6 +71,7 @@ final class NotionSync {
         self.catalog = catalog
         if let data = try? Data(contentsOf: fileURL), let saved = try? JSONDecoder().decode(Links.self, from: data) {
             links = saved
+            statuses = saved.statuses ?? [:]
         }
         schedule()
         log("launch: enabled=\(settings.notionEnabled) token=\(settings.makeNotion() != nil) moxie=\(settings.isConfigured) configured=\(settings.notionIsConfigured)")
@@ -75,6 +81,9 @@ final class NotionSync {
     }
 
     var isSyncing: Bool { state == .syncing }
+
+    /// The task's status in Notion, when known.
+    func status(for taskId: String) -> String? { statuses[taskId] }
 
     // MARK: Scheduling
 
@@ -138,9 +147,9 @@ final class NotionSync {
             var counts = Counts()
             let clientPages = try await loadClientPages(notion)
             log("clients: \(clientPages.count) Notion client names")
-            let projectPages = try await syncProjects(notion: notion, moxie: moxie, clientPages: clientPages, counts: &counts)
-            log("projects: \(projectPages.count) linked (\(counts.projectsCreated) created, \(counts.projectsUpdated) updated)")
-            let taskPages = try await syncTasks(notion: notion, moxie: moxie, clientPages: clientPages, projectPages: projectPages, counts: &counts)
+            let projects = try await syncProjects(notion: notion, moxie: moxie, clientPages: clientPages, counts: &counts)
+            log("projects: \(projects.pages.count) linked (\(counts.projectsCreated) created, \(counts.projectsUpdated) updated)")
+            let taskPages = try await syncTasks(notion: notion, moxie: moxie, clientPages: clientPages, projects: projects, counts: &counts)
             log("tasks: \(taskPages.count) linked (\(counts.tasksCreated) created, \(counts.tasksUpdated) updated)")
             try await syncTimeEntries(notion: notion, taskPages: taskPages, counts: &counts)
             persist()
@@ -216,25 +225,51 @@ final class NotionSync {
         static let clients = "🤝 Clients"
         static let moxieId = "Moxie Project ID"
         static let area = "Area"
+        static let parent = "Parent project"
+        static let subProjects = "Sub-projects"
     }
 
-    /// Returns Moxie project id → Notion page id for every project seen.
-    private func syncProjects(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], counts: inout Counts) async throws -> [String: String] {
+    /// What the task sync needs to know about projects.
+    struct ProjectLinks {
+        /// Moxie project id → Notion project page id.
+        var pages: [String: String] = [:]
+        /// Notion project page id → that page and every sub-project under it (via "Parent project").
+        var family: [String: Set<String>] = [:]
+    }
+
+    /// Matches every Moxie project to its Notion page (by Moxie Project ID, then by name within the same
+    /// client), creating pages for active projects that have none.
+    private func syncProjects(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], counts: inout Counts) async throws -> ProjectLinks {
         let existing = try await notion.queryAll(dataSource: settings.notionProjectsDB)
         var byMoxieId: [String: NotionAPI.Page] = [:]
-        var byName: [String: NotionAPI.Page] = [:]
+        var byName: [String: [NotionAPI.Page]] = [:]
+        var children: [String: Set<String>] = [:]
         for page in existing {
-            if let id = page.text(ProjectFields.moxieId)?.trimmingCharacters(in: .whitespaces), !id.isEmpty { byMoxieId[id] = page }
-            if let name = page.text(ProjectFields.name)?.lowercased(), byName[name] == nil { byName[name] = page }
+            if let id = page.text(ProjectFields.moxieId)?.trimmingCharacters(in: .whitespaces), !id.isEmpty {
+                byMoxieId[id] = page
+            } else if let name = page.text(ProjectFields.name) {
+                // Only pages not yet tied to a Moxie project are candidates for a name match.
+                byName[Self.matchKey(name), default: []].append(page)
+            }
+            for parent in page.relationIds(ProjectFields.parent) {
+                children[Self.pageKey(parent), default: []].insert(Self.pageKey(page.id))
+            }
+            for child in page.relationIds(ProjectFields.subProjects) {
+                children[Self.pageKey(page.id), default: []].insert(Self.pageKey(child))
+            }
         }
 
         let clients = try await moxie.clients()
-        var result: [String: String] = [:]
+        var result = ProjectLinks()
+        var seen = Set<String>()
+        var claimed = Set(byMoxieId.values.map(\.id))
         for client in clients {
             guard let projects = try? await moxie.projects(clientName: client.name) else { continue }
             let clientPage = clientPage(named: client.name, in: clientPages)
-            for project in projects {
-                let page = byMoxieId[project.id] ?? byName[project.name.lowercased()]
+            // The search is by name, so it can return projects of other clients whose names contain this one.
+            for project in projects where (project.clientId == nil || project.clientId == client.id) && seen.insert(project.id).inserted {
+                let page = byMoxieId[project.id]
+                    ?? nameMatch(project.name, clientPage: clientPage, in: byName, excluding: claimed)
                 var properties: [String: Any] = [
                     ProjectFields.name: NotionAPI.title(project.name),
                     ProjectFields.moxieId: NotionAPI.richText(project.id),
@@ -242,6 +277,7 @@ final class NotionSync {
                 if let clientPage { properties[ProjectFields.clients] = NotionAPI.relation([clientPage]) }
 
                 if let page {
+                    claimed.insert(page.id)
                     // A project that ended in Moxie closes the Notion one, but only from "Active" so a
                     // deliberate On Hold / Planning / Cancelled set in Notion is kept.
                     if !project.isActive, page.status(ProjectFields.status) == "Active" {
@@ -254,19 +290,56 @@ final class NotionSync {
                         await pace()
                     }
                     links.projects[project.id] = .init(page: page.id, fingerprint: fingerprint)
-                    result[project.id] = page.id
+                    result.pages[project.id] = page.id
                 } else if project.isActive {
                     properties[ProjectFields.status] = NotionAPI.status("Active")
                     properties[ProjectFields.area] = NotionAPI.select("Client work")
                     let id = try await notion.createPage(dataSource: settings.notionProjectsDB, properties: properties)
                     counts.projectsCreated += 1
                     links.projects[project.id] = .init(page: id, fingerprint: Self.fingerprint(properties))
-                    result[project.id] = id
+                    result.pages[project.id] = id
+                    claimed.insert(id)
                     await pace()
                 }
             }
         }
+
+        // Each linked project's family: itself plus all sub-projects, however deep.
+        for page in result.pages.values {
+            var family: Set<String> = [Self.pageKey(page)]
+            var queue = [Self.pageKey(page)]
+            while let next = queue.popLast() {
+                for child in children[next] ?? [] where family.insert(child).inserted { queue.append(child) }
+            }
+            result.family[Self.pageKey(page)] = family
+        }
         return result
+    }
+
+    /// A Notion project with the same name and no Moxie ID yet. When several share the name (two clients
+    /// can each have an "OBM Retainer"), only one linked to the same client counts; otherwise no match,
+    /// so the wrong project is never linked.
+    private func nameMatch(_ name: String, clientPage: String?, in byName: [String: [NotionAPI.Page]], excluding claimed: Set<String>) -> NotionAPI.Page? {
+        let candidates = (byName[Self.matchKey(name)] ?? []).filter { !claimed.contains($0.id) }
+        let sameClient = candidates.filter { page in
+            guard let clientPage else { return false }
+            return page.relationIds(ProjectFields.clients).map(Self.pageKey).contains(Self.pageKey(clientPage))
+        }
+        if sameClient.count == 1 { return sameClient[0] }
+        if candidates.count == 1, candidates[0].relationIds(ProjectFields.clients).isEmpty || clientPage == nil {
+            return candidates[0]
+        }
+        return nil
+    }
+
+    /// Names compared loosely: case, punctuation and spacing don't matter ("OBM retainer" = "OBM Retainer –").
+    private static func matchKey(_ text: String) -> String {
+        text.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
+
+    /// Notion returns page ids with or without dashes depending on where they come from.
+    private static func pageKey(_ id: String) -> String {
+        id.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
     // MARK: Tasks
@@ -286,7 +359,7 @@ final class NotionSync {
     }
 
     /// Returns Moxie task id → Notion page id for every synced task.
-    private func syncTasks(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], projectPages: [String: String], counts: inout Counts) async throws -> [String: String] {
+    private func syncTasks(notion: NotionAPI, moxie: MoxieAPI, clientPages: [String: String], projects: ProjectLinks, counts: inout Counts) async throws -> [String: String] {
         let existing = try await notion.queryAll(
             dataSource: settings.notionTasksDB,
             filter: ["property": TaskFields.moxieId, "rich_text": ["is_not_empty": true]]
@@ -312,8 +385,18 @@ final class NotionSync {
             if let text = task.description?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                 properties[TaskFields.description] = NotionAPI.richText(Self.plainText(text))
             }
-            if let projectId = task.projectRef?.id ?? task.projectId, let projectPage = projectPages[projectId] {
-                properties[TaskFields.project] = NotionAPI.relation([projectPage])
+            if let projectId = task.projectRef?.id ?? task.projectId, let projectPage = projects.pages[projectId] {
+                // A task you moved to a sub-project in Notion (Kristen Proby Community under OBM Retainer)
+                // stays there; only a link outside the Moxie project's family is corrected.
+                let family = projects.family[Self.pageKey(projectPage)] ?? [Self.pageKey(projectPage)]
+                let current = page?.relationIds(TaskFields.project) ?? []
+                if !current.isEmpty, current.allSatisfy({ family.contains(Self.pageKey($0)) }) {
+                    properties[TaskFields.project] = NotionAPI.relation(current)
+                } else {
+                    properties[TaskFields.project] = NotionAPI.relation([projectPage])
+                }
+            } else if task.isOpen, page?.relationIds(TaskFields.project).isEmpty != false {
+                log("task \(task.id) “\(task.name)”: no Notion project for Moxie project \(task.projectRef?.name ?? task.projectId ?? "none")")
             }
             if let clientPage = clientPage(named: task.clientRef?.name, in: clientPages) {
                 properties[TaskFields.clients] = NotionAPI.relation([clientPage])
@@ -321,16 +404,19 @@ final class NotionSync {
 
             if let page {
                 let current = page.status(TaskFields.status) ?? ""
+                var newStatus = current
                 if let chosen = links.statusOverrides[task.id] {
-                    properties[TaskFields.status] = NotionAPI.status(chosen)
+                    newStatus = chosen
                 } else if task.archived == true {
-                    if current != "Cancelled" { properties[TaskFields.status] = NotionAPI.status("Cancelled") }
+                    if current != "Cancelled" { newStatus = "Cancelled" }
                 } else if !task.isOpen {
-                    if !TaskFields.completeStatuses.contains(current) { properties[TaskFields.status] = NotionAPI.status("Done") }
+                    if !TaskFields.completeStatuses.contains(current) { newStatus = "Done" }
                 } else if TaskFields.completeStatuses.contains(current) {
                     // Reopened in Moxie (or closed only in Notion): Moxie wins.
-                    properties[TaskFields.status] = NotionAPI.status("To Do")
+                    newStatus = "To Do"
                 }
+                if newStatus != current { properties[TaskFields.status] = NotionAPI.status(newStatus) }
+                if !newStatus.isEmpty { statuses[task.id] = newStatus }
                 let fingerprint = Self.fingerprint(properties)
                 if links.tasks[task.id]?.fingerprint != fingerprint || links.tasks[task.id]?.page != page.id {
                     try await notion.updatePage(page.id, properties: properties)
@@ -341,7 +427,9 @@ final class NotionSync {
                 links.tasks[task.id] = .init(page: page.id, fingerprint: fingerprint)
                 result[task.id] = page.id
             } else if task.isOpen {
-                properties[TaskFields.status] = NotionAPI.status(links.statusOverrides[task.id] ?? "To Do")
+                let status = links.statusOverrides[task.id] ?? "To Do"
+                properties[TaskFields.status] = NotionAPI.status(status)
+                statuses[task.id] = status
                 links.statusOverrides[task.id] = nil
                 properties[TaskFields.owner] = NotionAPI.select("Molli")
                 let id = try await notion.createPage(dataSource: settings.notionTasksDB, properties: properties)
@@ -439,6 +527,7 @@ final class NotionSync {
     }
 
     private func persist() {
+        links.statuses = statuses
         guard let data = try? JSONEncoder().encode(links) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
@@ -446,6 +535,7 @@ final class NotionSync {
     /// Forgets which Notion pages belong to which Moxie records; the next sync re-matches by Moxie ID.
     func resetLinks() {
         links = Links()
+        statuses = [:]
         persist()
     }
 }

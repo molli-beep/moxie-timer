@@ -196,6 +196,13 @@ struct FocusTab: View {
                         DueBadge(date: due)
                     }
                     KindBadge(isTicket: target.ticketId != nil, isOwn: target.taskId == nil && target.ticketId == nil)
+                    if let taskId = target.taskId, target.ticketId == nil {
+                        Spacer(minLength: 4)
+                        StatusMenu(taskId: taskId, name: target.name, projectTypeId: target.projectTypeId,
+                                   fallback: inbox.tasks.first { $0.id == taskId }?.status) {
+                            await focus.finish(outcome: .done)
+                        }
+                    }
                 }
                 if let reason = focus.pickReason {
                     Label(reason, systemImage: "sparkles")
@@ -323,6 +330,12 @@ struct FocusTab: View {
                 if !target.context.isEmpty {
                     Text(target.context).font(.system(size: 12)).foregroundStyle(Theme.muted)
                 }
+                if let taskId = target.taskId, target.ticketId == nil {
+                    StatusMenu(taskId: taskId, name: target.name, projectTypeId: target.projectTypeId,
+                               fallback: inbox.tasks.first { $0.id == taskId }?.status) {
+                        await focus.finish(outcome: .done)
+                    }
+                }
             }
 
             if !target.firstStep.isEmpty {
@@ -370,6 +383,7 @@ struct TaskRow: View {
     let action: () -> Void
     @Environment(FocusStore.self) private var focus
     @Environment(AppSettings.self) private var settings
+    @Environment(NotionSync.self) private var notion
     @State private var hovering = false
     @State private var confirming = false
     @State private var working = false
@@ -400,6 +414,13 @@ struct TaskRow: View {
                         }
                         HStack(spacing: 5) {
                             KindBadge(isTicket: task.isTicket)
+                            if let status = rowStatus {
+                                Text(status)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(StatusMenu.color(for: status))
+                                    .lineLimit(1)
+                                    .fixedSize()
+                            }
                             let context = [task.client?.name, task.project?.name].compactMap { $0 }.joined(separator: " · ")
                             if !context.isEmpty {
                                 Text(context).font(.system(size: 11)).foregroundStyle(Theme.muted).lineLimit(1)
@@ -423,6 +444,13 @@ struct TaskRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+
+            if !task.isTicket {
+                StatusMenu(taskId: task.id, name: task.name, projectTypeId: task.projectTypeId,
+                           fallback: task.status, compact: true) {
+                    await focus.complete(task)
+                }
+            }
 
             if settings.completeInMoxie, hovering || confirming || working {
                 Button {
@@ -461,6 +489,12 @@ struct TaskRow: View {
             hovering = inside
             if !inside, !working { confirming = false }
         }
+    }
+
+    /// Status worth showing in the row: anything but plain To Do.
+    private var rowStatus: String? {
+        guard !task.isTicket, let status = notion.status(for: task.id) else { return nil }
+        return status.caseInsensitiveCompare("To Do") == .orderedSame ? nil : status
     }
 
     private var priorityColor: Color {

@@ -113,6 +113,9 @@ final class AppModel {
         // A finished task or a logged entry reaches Notion within seconds, not at the next scheduled sync.
         focus.onTaskChanged = { notion.requestSoon() }
         focus.onStatusChosen = { id, status in notion.setStatus(taskId: id, status: status) }
+        focus.statusOf = { id in notion.status(for: id) }
+        let settings = settings
+        focus.autoInProgress = { settings.autoInProgress }
         timer.onEntrySent = { notion.requestSoon() }
     }
 }

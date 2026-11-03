@@ -43,6 +43,21 @@ final class AppSettings {
         finishStatuses.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
+    /// Statuses in the status menu on tasks: To Do, then the Finish list (Done has its own item).
+    var statusChoices: [String] {
+        var list = ["To Do"]
+        for status in finishStatusList where !list.contains(where: { $0.caseInsensitiveCompare(status) == .orderedSame })
+            && status.caseInsensitiveCompare("Done") != .orderedSame {
+            list.append(status)
+        }
+        return list
+    }
+
+    /// Starting a focus block on a task sets it to "In progress" in Notion and Moxie.
+    var autoInProgress: Bool { didSet { defaults.set(autoInProgress, forKey: "autoInProgress") } }
+    /// Suggest the matching Moxie task from what's typed in Notes.
+    var suggestTaskFromNotes: Bool { didSet { defaults.set(suggestTaskFromNotes, forKey: "suggestTaskFromNotes") } }
+
     static let defaultNotionTasksDB = "25c50460-d03a-805c-b3bc-000b135a9f80"
     static let defaultNotionProjectsDB = "2b350460-d03a-8031-9b59-000bc8e425c6"
     static let defaultNotionClientsDB = "2c250460-d03a-80c0-bd42-000bbd199dbe"
@@ -232,6 +247,8 @@ final class AppSettings {
         notionClientsDB = defaults.string(forKey: "notionClientsDB") ?? Self.defaultNotionClientsDB
         notionTimeDB = defaults.string(forKey: "notionTimeDB") ?? Self.defaultNotionTimeDB
         finishStatuses = defaults.string(forKey: "finishStatuses") ?? Self.defaultFinishStatuses
+        autoInProgress = defaults.object(forKey: "autoInProgress") as? Bool ?? true
+        suggestTaskFromNotes = defaults.object(forKey: "suggestTaskFromNotes") as? Bool ?? true
         detectCalls = defaults.object(forKey: "detectCalls") as? Bool ?? true
         callIgnoreList = defaults.string(forKey: "callIgnoreList")
             ?? "screenpipe, krisp, whisper, dictation, siri, corespeech, voice memos, voicememos"
