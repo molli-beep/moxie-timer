@@ -286,7 +286,9 @@ struct ExpandedCard: View {
                 tabButton("Timer", systemName: "stopwatch", tab: .timer)
                 tabButton("Recent", systemName: "clock.arrow.circlepath", tab: .recent)
                 tabButton("Insights", systemName: "chart.bar.fill", tab: .insights)
-                tabButton("Pet & Voice", systemName: "pawprint", tab: .pet)
+                if settings.petEnabled {
+                    tabButton("Pet & Voice", systemName: "pawprint", tab: .pet)
+                }
             }
             .padding(3)
             .fixedSize()
