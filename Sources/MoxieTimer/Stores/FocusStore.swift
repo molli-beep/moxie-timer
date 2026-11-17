@@ -282,10 +282,10 @@ final class FocusStore {
     /// Finishes the work: saves the time, clears it from "Up next" and counts it as done.
     /// With `closeInMoxie` the task is also completed (or the ticket closed) in Moxie; otherwise Moxie is untouched.
     /// What happens to the task when you finish working on it.
-    /// Status itself is never written from here: Notion owns it (set Done/Waiting on… in Notion and Make
-    /// carries it to Moxie). The only status change the app makes is To Do → In progress on timer start.
+    /// Notion owns Status (Make carries it to Moxie). The app changes it only on timer start (To Do → In
+    /// progress) and on Done here (→ Done, unless already Done/Delivered/Cancelled).
     enum TaskOutcome: Equatable {
-        /// Complete it in Moxie (close a ticket). Notion's Status is not changed by the app.
+        /// Complete it in Moxie (close a ticket) and set the task to Done in Notion.
         case done
         /// Leave it open everywhere; only the time is saved.
         case keepOpen
@@ -300,6 +300,19 @@ final class FocusStore {
     }
 
     private(set) var lastFinished: FinishedTask?
+
+    /// Sets the task to Done in Notion after a fresh read (see `NotionSync.markDoneFromWidget`).
+    @ObservationIgnored var markDoneInNotion: ((String) async -> NotionSync.DoneResult)?
+
+    /// Writes Done to Notion for a task finished in the widget and says how it went, for the banner.
+    private func notionDone(taskId: String) async -> String {
+        guard let markDoneInNotion, !taskId.hasPrefix("local-") else { return "" }
+        switch await markDoneInNotion(taskId) {
+        case .written: return " Notion → Done ✓"
+        case let .alreadyFinished(status): return " Already “\(status)” in Notion, left as is."
+        case let .notWritten(reason): return " Notion not updated (\(reason)) — set Done there."
+        }
+    }
 
     /// After Notion confirmed a To Do → In progress move on timer start, gives the Moxie task the matching
     /// "In progress" stage too (when its project type has one) so the phone shows the same thing.
@@ -357,6 +370,8 @@ final class FocusStore {
             } catch {
                 lastError = "Time saved, but marking the task complete failed: \(error.localizedDescription)"
             }
+            // Notion is updated even if Moxie failed: Make completes the Moxie task from Notion's Done.
+            message += await notionDone(taskId: taskId)
         }
         if markComplete { stats.record { $0.tasksDone += 1 } }
         let inboxTask = finishedTarget?.taskId.flatMap { id in inbox.tasks.first { $0.id == id } }
@@ -375,10 +390,12 @@ final class FocusStore {
     func complete(_ task: MoxieTask) async {
         do {
             let confirmed: Bool
+            var notionNote = ""
             if let ticketId = task.sourceTicketId {
                 confirmed = try await inbox.closeTicket(id: ticketId)
             } else {
                 confirmed = try await inbox.markComplete(task)
+                notionNote = await notionDone(taskId: task.id)
             }
             stats.record { $0.tasksDone += 1 }
             if target?.taskId == task.id || (task.sourceTicketId != nil && target?.ticketId == task.sourceTicketId), block == nil {
@@ -387,6 +404,7 @@ final class FocusStore {
             banner = confirmed
                 ? "“\(task.name)” \(task.isTicket ? "closed" : "marked complete") in Moxie ✓"
                 : "Sent to Moxie, but it didn't confirm “\(task.name)” — check it there."
+            banner = (banner ?? "") + notionNote
             NSSound(named: "Hero")?.play()
             onTaskChanged?()
         } catch {

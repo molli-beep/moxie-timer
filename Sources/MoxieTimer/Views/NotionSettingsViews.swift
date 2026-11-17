@@ -32,7 +32,7 @@ struct NotionSettingsSection: View {
             Toggle("Keep Notion up to date", isOn: $settings.notionEnabled)
             Toggle("Only tasks assigned to me (or unassigned)", isOn: $settings.notionOnlyMine)
             Toggle("Move a task from “To Do” to “In progress” when I start a timer on it", isOn: $settings.autoInProgress)
-            Text("Checked against Notion at that moment; any other status is left alone. Otherwise the app never changes Status: set it in Notion.")
+            Text("Checked against Notion at that moment; any other status is left alone. Pressing Done in the widget sets Done in Notion (never over Delivered or Cancelled). Otherwise the app never changes Status.")
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.faint)
                 .fixedSize(horizontal: false, vertical: true)

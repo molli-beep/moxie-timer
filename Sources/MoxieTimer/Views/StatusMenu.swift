@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A task's Notion status, shown as a dot and label. Read-only: Status is set in Notion (Make carries it
-/// to Moxie). The app's only status change is To Do → In progress when a timer starts on the task.
+/// to Moxie). The app changes it only on timer start (To Do → In progress) and when you press Done.
 struct StatusMenu: View {
     let taskId: String
     /// Moxie's own status label, shown until Notion's is known.

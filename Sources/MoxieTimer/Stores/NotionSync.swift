@@ -9,9 +9,11 @@ import Observation
 /// mirrored into the Time Tracker as one row per entry, linked to its task.
 ///
 /// Task **Status** is different: Notion is the source of truth, and a Make scenario pushes it to Moxie
-/// (complete/reopen). The sync never writes a task's Status and never maps Moxie's state onto it. The one
-/// Status write this app makes is `markInProgressIfToDo`, which reads the page fresh and only moves
-/// "To Do" → "In progress" when a timer starts. The Checkbox property is never written.
+/// (complete/reopen). The sync never writes a task's Status and never maps Moxie's state onto it. The app
+/// writes Status in exactly two places, both reading the page fresh from Notion first:
+/// - `markInProgressIfToDo`: a timer starts on a task → "To Do" becomes "In progress", nothing else.
+/// - `markDoneFromWidget`: you press Done in the widget → "Done", unless it's already Done/Delivered/Cancelled.
+/// The Checkbox property is never written.
 @MainActor @Observable
 final class NotionSync {
     enum State: Equatable {
@@ -85,6 +87,48 @@ final class NotionSync {
 
     static let toDoStatus = "To Do"
     static let inProgressStatus = "In progress"
+    static let doneStatus = "Done"
+    /// Finished statuses. Done from the widget never overwrites one of these.
+    static let finishedStatuses: Set<String> = ["Done", "Delivered", "Cancelled"]
+
+    enum DoneResult {
+        /// Status was set to Done.
+        case written
+        /// Already finished in Notion (the status is attached); left as is.
+        case alreadyFinished(String)
+        /// No Notion page for the task, or Notion couldn't be reached; nothing written.
+        case notWritten(String)
+    }
+
+    /// Called when you press Done on a task in the widget (Finish → Done, or the complete button on a
+    /// row). Reads the page from Notion right now and sets Status to "Done", unless it's already Done,
+    /// Delivered or Cancelled, so a finished status is never overwritten or moved backward. Only Status
+    /// is written; Checkbox is not touched. Make then sees Done and completes the task in Moxie.
+    func markDoneFromWidget(taskId: String) async -> DoneResult {
+        guard settings.notionIsConfigured, let notion = settings.makeNotion() else {
+            return .notWritten("Notion isn't connected")
+        }
+        do {
+            guard let page = try await freshTaskPage(for: taskId, notion: notion, action: "done") else {
+                return .notWritten("no Notion task carries this Moxie Task ID")
+            }
+            let current = page.status(TaskFields.status)
+            statuses[taskId] = current
+            if let current, Self.finishedStatuses.contains(current) {
+                log("done: task \(taskId) is already “\(current)” in Notion; Status not touched")
+                persist()
+                return .alreadyFinished(current)
+            }
+            try await notion.updatePage(page.id, properties: [TaskFields.status: NotionAPI.status(Self.doneStatus)])
+            statuses[taskId] = Self.doneStatus
+            persist()
+            log("done: task \(taskId) “\(current ?? "no status")” → Done (from the widget)")
+            return .written
+        } catch {
+            log("done: couldn't read/write Status for task \(taskId): \(error.localizedDescription); Status not touched")
+            return .notWritten(error.localizedDescription)
+        }
+    }
 
     /// Called when a timer starts on a task. Reads the task's page from Notion right now and, only if its
     /// Status is exactly "To Do", sets it to "In progress". Any other status (Done, Delivered, Cancelled,
@@ -94,18 +138,7 @@ final class NotionSync {
     func markInProgressIfToDo(taskId: String) async -> Bool {
         guard settings.notionIsConfigured, let notion = settings.makeNotion() else { return false }
         do {
-            guard let pageId = try await taskPageId(for: taskId, notion: notion) else {
-                log("start: no Notion task carries Moxie Task ID \(taskId); Status not touched")
-                return false
-            }
-            let page = try await notion.page(pageId)
-            // A stale link (page re-pointed at another Moxie task) is never written.
-            guard page.text(TaskFields.moxieId)?.trimmingCharacters(in: .whitespaces) == taskId else {
-                log("start: page \(pageId) no longer carries Moxie Task ID \(taskId); Status not touched")
-                links.tasks[taskId] = nil
-                persist()
-                return false
-            }
+            guard let page = try await freshTaskPage(for: taskId, notion: notion, action: "start") else { return false }
             let current = page.status(TaskFields.status)
             statuses[taskId] = current
             guard current == Self.toDoStatus else {
@@ -113,7 +146,7 @@ final class NotionSync {
                 persist()
                 return false
             }
-            try await notion.updatePage(pageId, properties: [TaskFields.status: NotionAPI.status(Self.inProgressStatus)])
+            try await notion.updatePage(page.id, properties: [TaskFields.status: NotionAPI.status(Self.inProgressStatus)])
             statuses[taskId] = Self.inProgressStatus
             persist()
             log("start: task \(taskId) To Do → In progress")
@@ -122,6 +155,24 @@ final class NotionSync {
             log("start: couldn't read/write Status for task \(taskId): \(error.localizedDescription); Status not touched")
             return false
         }
+    }
+
+    /// The task's Notion page, read fresh (never from cache), or nil when there's no single page for it or
+    /// the saved link now points at a page with a different Moxie Task ID. `action` labels the log lines.
+    private func freshTaskPage(for taskId: String, notion: NotionAPI, action: String) async throws -> NotionAPI.Page? {
+        guard let pageId = try await taskPageId(for: taskId, notion: notion) else {
+            log("\(action): no single Notion task carries Moxie Task ID \(taskId); Status not touched")
+            return nil
+        }
+        let page = try await notion.page(pageId)
+        // A stale link (page re-pointed at another Moxie task) is never written.
+        guard page.text(TaskFields.moxieId)?.trimmingCharacters(in: .whitespaces) == taskId else {
+            log("\(action): page \(pageId) no longer carries Moxie Task ID \(taskId); Status not touched")
+            links.tasks[taskId] = nil
+            persist()
+            return nil
+        }
+        return page
     }
 
     /// The Notion page for a Moxie task: the saved link, else a lookup by Moxie Task ID (exactly one match).

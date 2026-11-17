@@ -68,9 +68,10 @@ More detail:
   then a notification, then a prompt: **Back to it**, **Back, drop N min**, **Take a break** or **It's for work**.
   Optional check-ins ask "Still on *task*?" every 20 minutes.
 - **Status:** the dot next to a task (in Up next and on the focus card) shows its Notion status. Status is set in
-  Notion, and a Make scenario carries it to Moxie; the app never writes it, with one exception: starting a timer on a
-  task that is **To Do** in Notion (checked at that moment) moves it to **In progress** (Settings → Notion to turn it
-  off). Syncs, stops and refreshes only write time and task details.
+  Notion, and a Make scenario carries it to Moxie. The app writes it in two cases only, each after reading the task
+  from Notion at that moment: starting a timer on a **To Do** task moves it to **In progress** (Settings → Notion to
+  turn it off), and pressing **Done** in the widget sets **Done** (unless it's already Done, Delivered or Cancelled).
+  Syncs, stops and refreshes only write time and task details.
 - **Finish** saves the time and clears the task from Up next. Closing tasks and tickets in Moxie from the widget is
   opt-in (Settings → Focus).
 

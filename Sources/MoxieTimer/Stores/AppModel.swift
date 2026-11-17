@@ -122,6 +122,8 @@ final class AppModel {
         timer.onEntrySent = { notion.requestSoon() }
         // The only Status write: starting a timer on a task moves it To Do → In progress, after reading the
         // task's current Status from Notion. Any other status is left alone.
+        // Pressing Done in the widget sets Done in Notion (after a fresh read; never over Delivered/Cancelled).
+        focus.markDoneInNotion = { taskId in await notion.markDoneFromWidget(taskId: taskId) }
         let settings = settings
         let focus = focus
         timer.onStartedOnTask = { taskId in
