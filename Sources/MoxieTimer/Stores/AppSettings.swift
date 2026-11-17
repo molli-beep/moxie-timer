@@ -35,25 +35,8 @@ final class AppSettings {
     var notionProjectsDB: String { didSet { defaults.set(notionProjectsDB, forKey: "notionProjectsDB") } }
     var notionClientsDB: String { didSet { defaults.set(notionClientsDB, forKey: "notionClientsDB") } }
     var notionTimeDB: String { didSet { defaults.set(notionTimeDB, forKey: "notionTimeDB") } }
-    /// Comma-separated Notion statuses offered when finishing a task, besides Done and "keep open".
-    var finishStatuses: String { didSet { defaults.set(finishStatuses, forKey: "finishStatuses") } }
-    static let defaultFinishStatuses = "In progress, Waiting on Client, Waiting on Third Party, Ready for Approval, Need to Revise"
-
-    var finishStatusList: [String] {
-        finishStatuses.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-    }
-
-    /// Statuses in the status menu on tasks: To Do, then the Finish list (Done has its own item).
-    var statusChoices: [String] {
-        var list = ["To Do"]
-        for status in finishStatusList where !list.contains(where: { $0.caseInsensitiveCompare(status) == .orderedSame })
-            && status.caseInsensitiveCompare("Done") != .orderedSame {
-            list.append(status)
-        }
-        return list
-    }
-
-    /// Starting a focus block on a task sets it to "In progress" in Notion and Moxie.
+    /// Starting a timer on a task whose Notion Status is "To Do" (read fresh) moves it to "In progress".
+    /// The only Status change the app ever makes.
     var autoInProgress: Bool { didSet { defaults.set(autoInProgress, forKey: "autoInProgress") } }
     /// Suggest the matching Moxie task from what's typed in Notes.
     var suggestTaskFromNotes: Bool { didSet { defaults.set(suggestTaskFromNotes, forKey: "suggestTaskFromNotes") } }
@@ -246,7 +229,6 @@ final class AppSettings {
         notionProjectsDB = defaults.string(forKey: "notionProjectsDB") ?? Self.defaultNotionProjectsDB
         notionClientsDB = defaults.string(forKey: "notionClientsDB") ?? Self.defaultNotionClientsDB
         notionTimeDB = defaults.string(forKey: "notionTimeDB") ?? Self.defaultNotionTimeDB
-        finishStatuses = defaults.string(forKey: "finishStatuses") ?? Self.defaultFinishStatuses
         autoInProgress = defaults.object(forKey: "autoInProgress") as? Bool ?? true
         suggestTaskFromNotes = defaults.object(forKey: "suggestTaskFromNotes") as? Bool ?? true
         detectCalls = defaults.object(forKey: "detectCalls") as? Bool ?? true

@@ -212,7 +212,6 @@ final class FocusStore {
     }
 
     func startBlock(minutes: Int, warmup: Bool? = nil) {
-        markInProgressIfNeeded()
         let length = TimeInterval(max(minutes, 5) * 60)
         let now = Date.now
         let useWarmup = (warmup ?? warmupEnabled) && length > Self.warmupLength
@@ -283,14 +282,13 @@ final class FocusStore {
     /// Finishes the work: saves the time, clears it from "Up next" and counts it as done.
     /// With `closeInMoxie` the task is also completed (or the ticket closed) in Moxie; otherwise Moxie is untouched.
     /// What happens to the task when you finish working on it.
+    /// Notion owns Status (Make carries it to Moxie). The app changes it only on timer start (To Do → In
+    /// progress) and on Done here (→ Done, unless already Done/Delivered/Cancelled).
     enum TaskOutcome: Equatable {
-        /// Complete it in Moxie (close a ticket); Notion follows with "Done".
+        /// Complete it in Moxie (close a ticket) and set the task to Done in Notion.
         case done
         /// Leave it open everywhere; only the time is saved.
         case keepOpen
-        /// Set a status (a Notion status name, e.g. "Waiting on Client"). Moxie gets the same stage when its
-        /// project type has one with that label.
-        case status(String)
     }
 
     /// The task just finished, kept for the quick actions under the celebration banner.
@@ -302,39 +300,27 @@ final class FocusStore {
     }
 
     private(set) var lastFinished: FinishedTask?
-    /// Called with (Moxie task id, status name) when the user picks a status at finish time.
-    @ObservationIgnored var onStatusChosen: ((String, String) -> Void)?
 
-    /// Current status of a task (Notion's when known), for skipping a redundant "In progress".
-    @ObservationIgnored var statusOf: (String) -> String? = { _ in nil }
-    /// Whether starting a block should set the task to "In progress".
-    @ObservationIgnored var autoInProgress: () -> Bool = { false }
-    @ObservationIgnored private var markedInProgress: Set<String> = []
+    /// Sets the task to Done in Notion after a fresh read (see `NotionSync.markDoneFromWidget`).
+    @ObservationIgnored var markDoneInNotion: ((String) async -> NotionSync.DoneResult)?
 
-    private func markInProgressIfNeeded() {
-        guard autoInProgress(), let target, let taskId = target.taskId, target.ticketId == nil,
-              !taskId.hasPrefix("local-"), !markedInProgress.contains(taskId) else { return }
-        markedInProgress.insert(taskId)
-        if statusOf(taskId)?.caseInsensitiveCompare("In progress") == .orderedSame { return }
-        Task { await setStatus("In progress", taskId: taskId, name: target.name, projectTypeId: target.projectTypeId, quiet: true) }
+    /// Writes Done to Notion for a task finished in the widget and says how it went, for the banner.
+    private func notionDone(taskId: String) async -> String {
+        guard let markDoneInNotion, !taskId.hasPrefix("local-") else { return "" }
+        switch await markDoneInNotion(taskId) {
+        case .written: return " Notion → Done ✓"
+        case let .alreadyFinished(status): return " Already “\(status)” in Notion, left as is."
+        case let .notWritten(reason): return " Notion not updated (\(reason)) — set Done there."
+        }
     }
 
-    /// Sets a task's status without finishing it: Notion gets the status on the next sync (seconds away),
-    /// Moxie moves the task to the stage with the same name when its project type has one.
-    /// "Done" isn't handled here; it goes through `finish(outcome: .done)` or `complete(_:)`.
-    func setStatus(_ status: String, taskId: String, name: String, projectTypeId: String?, quiet: Bool = false) async {
-        onStatusChosen?(taskId, status)
+    /// After Notion confirmed a To Do → In progress move on timer start, gives the Moxie task the matching
+    /// "In progress" stage too (when its project type has one) so the phone shows the same thing.
+    /// Called only after that Notion write succeeded; never on its own. Quiet: no banner, no error.
+    func mirrorInProgressToMoxie(taskId: String) async {
         let task = inbox.tasks.first { $0.id == taskId }
-            ?? MoxieTask(id: taskId, name: name, projectId: nil, status: nil, parentTaskId: nil, projectTypeId: projectTypeId)
-        var message = "“\(name)” → \(status)."
-        do {
-            let matched = try await inbox.setStage(task, label: status)
-            message += matched ? " Moxie updated ✓" : " (Moxie has no “\(status)” stage, so it stays as is there.)"
-        } catch {
-            if !quiet { lastError = "Notion will update, but Moxie didn't: \(error.localizedDescription)" }
-        }
-        if !quiet { banner = message }
-        if status.caseInsensitiveCompare("In progress") != .orderedSame { markedInProgress.remove(taskId) }
+            ?? MoxieTask(id: taskId, name: "", projectId: nil, status: nil, parentTaskId: nil, projectTypeId: nil)
+        _ = try? await inbox.setStage(task, label: NotionSync.inProgressStatus)
     }
 
     func clearBanner() {
@@ -364,19 +350,9 @@ final class FocusStore {
         switch outcome {
         case .done: message = "Nice work — “\(finishedTarget?.name ?? "task")” done"
         case .keepOpen: message = "Saved — “\(finishedTarget?.name ?? "task")” stays open"
-        case let .status(name): message = "“\(finishedTarget?.name ?? "task")” → \(name)"
         }
         if focused >= 60 { message += " after \(DurationFormat.short(focused)) of focus" }
         message += "."
-        if case let .status(name) = outcome, let taskId = finishedTarget?.taskId {
-            onStatusChosen?(taskId, name)
-            let task = inbox.tasks.first { $0.id == taskId }
-                ?? MoxieTask(id: taskId, name: finishedTarget?.name ?? "", projectId: nil, status: nil, parentTaskId: nil,
-                             projectTypeId: finishedTarget?.projectTypeId)
-            if let matched = try? await inbox.setStage(task, label: name) {
-                message += matched ? " Moxie updated ✓" : " (Moxie has no “\(name)” stage, so it stays as is there.)"
-            }
-        }
         if markComplete, let ticketId = finishedTarget?.ticketId {
             do {
                 let confirmed = try await inbox.closeTicket(id: ticketId)
@@ -394,6 +370,8 @@ final class FocusStore {
             } catch {
                 lastError = "Time saved, but marking the task complete failed: \(error.localizedDescription)"
             }
+            // Notion is updated even if Moxie failed: Make completes the Moxie task from Notion's Done.
+            message += await notionDone(taskId: taskId)
         }
         if markComplete { stats.record { $0.tasksDone += 1 } }
         let inboxTask = finishedTarget?.taskId.flatMap { id in inbox.tasks.first { $0.id == id } }
@@ -412,10 +390,12 @@ final class FocusStore {
     func complete(_ task: MoxieTask) async {
         do {
             let confirmed: Bool
+            var notionNote = ""
             if let ticketId = task.sourceTicketId {
                 confirmed = try await inbox.closeTicket(id: ticketId)
             } else {
                 confirmed = try await inbox.markComplete(task)
+                notionNote = await notionDone(taskId: task.id)
             }
             stats.record { $0.tasksDone += 1 }
             if target?.taskId == task.id || (task.sourceTicketId != nil && target?.ticketId == task.sourceTicketId), block == nil {
@@ -424,6 +404,7 @@ final class FocusStore {
             banner = confirmed
                 ? "“\(task.name)” \(task.isTicket ? "closed" : "marked complete") in Moxie ✓"
                 : "Sent to Moxie, but it didn't confirm “\(task.name)” — check it there."
+            banner = (banner ?? "") + notionNote
             NSSound(named: "Hero")?.play()
             onTaskChanged?()
         } catch {

@@ -81,6 +81,13 @@ struct NotionAPI: Sendable {
         return pages
     }
 
+    /// One page, read fresh from Notion (no cache). Used right before the only Status write the app makes.
+    func page(_ id: String) async throws -> Page {
+        let json = try await send("pages/\(id)")
+        guard let pageId = json["id"] as? String else { throw APIError.invalidResponse }
+        return Page(id: pageId, properties: json["properties"] as? [String: Any] ?? [:])
+    }
+
     /// Reads the data source to confirm the token works and the integration can see it. Returns its title.
     func dataSourceTitle(_ dataSource: String) async throws -> String {
         let json = try await send("data_sources/\(dataSource)")

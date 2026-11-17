@@ -34,6 +34,8 @@ final class TimerStore {
     @ObservationIgnored private let storageKey = "timerState"
     /// Called once an entry has reached Moxie, so the Notion mirror can follow.
     @ObservationIgnored var onEntrySent: (() -> Void)?
+    /// Called with the Moxie task id when a new timer starts on a task (not on resume or stop).
+    @ObservationIgnored var onStartedOnTask: ((String) -> Void)?
 
     init(settings: AppSettings, history: HistoryStore) {
         self.settings = settings
@@ -50,6 +52,7 @@ final class TimerStore {
     func start() {
         lastError = nil
         session = TimerSession(runningSince: .now)
+        if let taskId = draft.task?.id, !taskId.hasPrefix("local-") { onStartedOnTask?(taskId) }
     }
 
     func toggle() {

@@ -198,10 +198,7 @@ struct FocusTab: View {
                     KindBadge(isTicket: target.ticketId != nil, isOwn: target.taskId == nil && target.ticketId == nil)
                     if let taskId = target.taskId, target.ticketId == nil {
                         Spacer(minLength: 4)
-                        StatusMenu(taskId: taskId, name: target.name, projectTypeId: target.projectTypeId,
-                                   fallback: inbox.tasks.first { $0.id == taskId }?.status) {
-                            await focus.finish(outcome: .done)
-                        }
+                        StatusMenu(taskId: taskId, fallback: inbox.tasks.first { $0.id == taskId }?.status)
                     }
                 }
                 if let reason = focus.pickReason {
@@ -331,10 +328,7 @@ struct FocusTab: View {
                     Text(target.context).font(.system(size: 12)).foregroundStyle(Theme.muted)
                 }
                 if let taskId = target.taskId, target.ticketId == nil {
-                    StatusMenu(taskId: taskId, name: target.name, projectTypeId: target.projectTypeId,
-                               fallback: inbox.tasks.first { $0.id == taskId }?.status) {
-                        await focus.finish(outcome: .done)
-                    }
+                    StatusMenu(taskId: taskId, fallback: inbox.tasks.first { $0.id == taskId }?.status)
                 }
             }
 
@@ -446,10 +440,7 @@ struct TaskRow: View {
             .buttonStyle(.plain)
 
             if !task.isTicket {
-                StatusMenu(taskId: task.id, name: task.name, projectTypeId: task.projectTypeId,
-                           fallback: task.status, compact: true) {
-                    await focus.complete(task)
-                }
+                StatusMenu(taskId: task.id, fallback: task.status, compact: true)
             }
 
             if settings.completeInMoxie, hovering || confirming || working {

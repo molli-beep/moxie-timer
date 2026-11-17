@@ -31,20 +31,12 @@ struct NotionSettingsSection: View {
 
             Toggle("Keep Notion up to date", isOn: $settings.notionEnabled)
             Toggle("Only tasks assigned to me (or unassigned)", isOn: $settings.notionOnlyMine)
-            Toggle("Set a task to “In progress” when I start focusing on it", isOn: $settings.autoInProgress)
+            Toggle("Move a task from “To Do” to “In progress” when I start a timer on it", isOn: $settings.autoInProgress)
+            Text("Checked against Notion at that moment; any other status is left alone. Pressing Done in the widget sets Done in Notion (never over Delivered or Cancelled). Otherwise the app never changes Status.")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
             Toggle("Suggest the matching task from what I type in Notes", isOn: $settings.suggestTaskFromNotes)
-
-            VStack(alignment: .leading, spacing: 6) {
-                CapsLabel("Task statuses")
-                FieldBox {
-                    TextField(AppSettings.defaultFinishStatuses, text: $settings.finishStatuses)
-                        .textFieldStyle(.plain)
-                }
-                Text("Comma-separated Notion status names. They're offered at Finish and in the status menu on every task (the dot next to it), along with To Do and Done. Moxie gets the same stage when the project has one with that name.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             HStack(spacing: 8) {
                 Text("Every")
