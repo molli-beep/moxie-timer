@@ -67,10 +67,10 @@ More detail:
 - **Staying on task:** mark distracting apps and sites. Drift to one and the pill turns amber with "Back to: *task*",
   then a notification, then a prompt: **Back to it**, **Back, drop N min**, **Take a break** or **It's for work**.
   Optional check-ins ask "Still on *task*?" every 20 minutes.
-- **Status menu:** the dot next to a task (in Up next and on the focus card) sets To Do, In progress, Waiting on
-  Client, Ready for Approval and the rest without finishing it. Notion follows within seconds, and Moxie moves the
-  task to the stage with the same name when its project has one. Starting a focus block sets the task to
-  **In progress** (Settings → Notion to turn it off).
+- **Status:** the dot next to a task (in Up next and on the focus card) shows its Notion status. Status is set in
+  Notion, and a Make scenario carries it to Moxie; the app never writes it, with one exception: starting a timer on a
+  task that is **To Do** in Notion (checked at that moment) moves it to **In progress** (Settings → Notion to turn it
+  off). Syncs, stops and refreshes only write time and task details.
 - **Finish** saves the time and clears the task from Up next. Closing tasks and tickets in Moxie from the widget is
   opt-in (Settings → Focus).
 

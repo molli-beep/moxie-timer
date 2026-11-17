@@ -3,10 +3,15 @@ import Observation
 
 /// Keeps Notion's Projects, Task Tracker and Time Tracker databases in step with Moxie.
 ///
-/// Moxie is the source of truth: projects and tasks flow one way, Moxie → Notion. Only the properties
-/// listed in `TaskFields`/`ProjectFields` are ever written, so everything added in Notion for planning
-/// (Area, Owner, Effort, Launch phase…) survives every sync. Time logged from this widget is mirrored into
-/// the Time Tracker as one row per entry, linked to its task.
+/// Projects and task details (name, due date, priority, description, links) flow Moxie → Notion. Only the
+/// properties listed in `TaskFields`/`ProjectFields` are ever written, so everything added in Notion for
+/// planning (Area, Owner, Effort, Launch phase…) survives every sync. Time logged from this widget is
+/// mirrored into the Time Tracker as one row per entry, linked to its task.
+///
+/// Task **Status** is different: Notion is the source of truth, and a Make scenario pushes it to Moxie
+/// (complete/reopen). The sync never writes a task's Status and never maps Moxie's state onto it. The one
+/// Status write this app makes is `markInProgressIfToDo`, which reads the page fresh and only moves
+/// "To Do" → "In progress" when a timer starts. The Checkbox property is never written.
 @MainActor @Observable
 final class NotionSync {
     enum State: Equatable {
@@ -20,7 +25,7 @@ final class NotionSync {
     private(set) var summary: String?
     /// Last connection test result, for Settings.
     var testResult: (text: String, isError: Bool)?
-    /// Moxie task id → its Notion status, as last seen in a sync or just chosen in the widget.
+    /// Moxie task id → its Notion status as last read from Notion. Display only: never written back.
     private(set) var statuses: [String: String] = [:]
 
     @ObservationIgnored private let settings: AppSettings
@@ -42,19 +47,10 @@ final class NotionSync {
         var tasks: [String: Link] = [:]
         /// LoggedEntry id → Time Tracker page id.
         var entries: [String: String] = [:]
-        /// Moxie task id → Notion status chosen at finish time, written on the next sync.
-        var statusOverrides: [String: String] = [:]
-        /// Moxie task id → Notion status last seen, so the widget can show it between syncs.
+        /// Moxie task id → Notion status last read, so the widget can show it between syncs. Display only.
+        /// (Older versions also saved "statusOverrides" here and wrote them on the next sync; that key is
+        /// now ignored when the file is read and dropped the next time it's saved.)
         var statuses: [String: String]? = nil
-    }
-
-    /// Remembers a status the user chose when finishing a task; the next sync writes it to Notion
-    /// even where the sync would otherwise leave the status alone.
-    func setStatus(taskId: String, status: String) {
-        links.statusOverrides[taskId] = status
-        statuses[taskId] = status
-        persist()
-        requestSoon(after: 3)
     }
 
     @ObservationIgnored private var links = Links()
@@ -82,8 +78,65 @@ final class NotionSync {
 
     var isSyncing: Bool { state == .syncing }
 
-    /// The task's status in Notion, when known.
+    /// The task's status in Notion, when known (as last read; for display only).
     func status(for taskId: String) -> String? { statuses[taskId] }
+
+    // MARK: The one Status write
+
+    static let toDoStatus = "To Do"
+    static let inProgressStatus = "In progress"
+
+    /// Called when a timer starts on a task. Reads the task's page from Notion right now and, only if its
+    /// Status is exactly "To Do", sets it to "In progress". Any other status (Done, Delivered, Cancelled,
+    /// Waiting on…, Ready for Approval, In progress, empty) is left exactly as it is. Nothing cached is
+    /// ever written, and no other property is touched. Returns true only when the write happened.
+    @discardableResult
+    func markInProgressIfToDo(taskId: String) async -> Bool {
+        guard settings.notionIsConfigured, let notion = settings.makeNotion() else { return false }
+        do {
+            guard let pageId = try await taskPageId(for: taskId, notion: notion) else {
+                log("start: no Notion task carries Moxie Task ID \(taskId); Status not touched")
+                return false
+            }
+            let page = try await notion.page(pageId)
+            // A stale link (page re-pointed at another Moxie task) is never written.
+            guard page.text(TaskFields.moxieId)?.trimmingCharacters(in: .whitespaces) == taskId else {
+                log("start: page \(pageId) no longer carries Moxie Task ID \(taskId); Status not touched")
+                links.tasks[taskId] = nil
+                persist()
+                return false
+            }
+            let current = page.status(TaskFields.status)
+            statuses[taskId] = current
+            guard current == Self.toDoStatus else {
+                log("start: task \(taskId) is “\(current ?? "no status")” in Notion; Status not touched")
+                persist()
+                return false
+            }
+            try await notion.updatePage(pageId, properties: [TaskFields.status: NotionAPI.status(Self.inProgressStatus)])
+            statuses[taskId] = Self.inProgressStatus
+            persist()
+            log("start: task \(taskId) To Do → In progress")
+            return true
+        } catch {
+            log("start: couldn't read/write Status for task \(taskId): \(error.localizedDescription); Status not touched")
+            return false
+        }
+    }
+
+    /// The Notion page for a Moxie task: the saved link, else a lookup by Moxie Task ID (exactly one match).
+    private func taskPageId(for taskId: String, notion: NotionAPI) async throws -> String? {
+        if let page = links.tasks[taskId]?.page { return page }
+        let matches = try await notion.queryAll(
+            dataSource: settings.notionTasksDB,
+            filter: ["property": TaskFields.moxieId, "rich_text": ["equals": taskId]]
+        )
+        guard matches.count == 1 else {
+            if matches.count > 1 { log("start: \(matches.count) Notion tasks carry Moxie Task ID \(taskId); Status not touched") }
+            return nil
+        }
+        return matches[0].id
+    }
 
     // MARK: Scheduling
 
@@ -476,7 +529,8 @@ final class NotionSync {
         static let clients = "🤝 Clients"
         static let moxieId = "Moxie Task ID"
         static let owner = "Owner"
-        static let completeStatuses: Set<String> = ["Done", "Delivered", "Cancelled"]
+        // Never written by the sync: "Status" (Notion → Moxie via Make; see markInProgressIfToDo for the
+        // one exception) and "Checkbox".
     }
 
     /// Returns Moxie task id → Notion page id for every synced task.
@@ -521,34 +575,20 @@ final class NotionSync {
             }
 
             if let page {
-                let current = page.status(TaskFields.status) ?? ""
-                var newStatus = current
-                if let chosen = links.statusOverrides[task.id] {
-                    newStatus = chosen
-                } else if task.archived == true {
-                    if current != "Cancelled" { newStatus = "Cancelled" }
-                } else if !task.isOpen {
-                    if !TaskFields.completeStatuses.contains(current) { newStatus = "Done" }
-                } else if TaskFields.completeStatuses.contains(current) {
-                    // Reopened in Moxie (or closed only in Notion): Moxie wins.
-                    newStatus = "To Do"
-                }
-                if newStatus != current { properties[TaskFields.status] = NotionAPI.status(newStatus) }
-                if !newStatus.isEmpty { statuses[task.id] = newStatus }
+                // Status is read for display only. It is never written here, whatever Moxie says: Notion
+                // owns Status and Make carries it to Moxie. (Mapping Moxie's open/closed state back onto
+                // Notion is what flipped Done tasks to "To Do" before Make had completed them in Moxie.)
+                statuses[task.id] = page.status(TaskFields.status)
                 let fingerprint = Self.fingerprint(properties)
                 if links.tasks[task.id]?.fingerprint != fingerprint || links.tasks[task.id]?.page != page.id {
                     try await notion.updatePage(page.id, properties: properties)
                     counts.tasksUpdated += 1
                     await pace()
                 }
-                links.statusOverrides[task.id] = nil
                 links.tasks[task.id] = .init(page: page.id, fingerprint: fingerprint)
                 result[task.id] = page.id
             } else if task.isOpen {
-                let status = links.statusOverrides[task.id] ?? "To Do"
-                properties[TaskFields.status] = NotionAPI.status(status)
-                statuses[task.id] = status
-                links.statusOverrides[task.id] = nil
+                // No Status on create either: the new page takes the Status property's default in Notion.
                 properties[TaskFields.owner] = NotionAPI.select("Molli")
                 let id = try await notion.createPage(dataSource: settings.notionTasksDB, properties: properties)
                 counts.tasksCreated += 1

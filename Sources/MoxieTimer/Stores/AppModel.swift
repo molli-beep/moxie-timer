@@ -117,11 +117,20 @@ final class AppModel {
         notion = NotionSync(settings: settings, history: history, catalog: catalog)
         let notion = notion
         // A finished task or a logged entry reaches Notion within seconds, not at the next scheduled sync.
+        // (These syncs write time and task details only, never Status.)
         focus.onTaskChanged = { notion.requestSoon() }
-        focus.onStatusChosen = { id, status in notion.setStatus(taskId: id, status: status) }
-        focus.statusOf = { id in notion.status(for: id) }
-        let settings = settings
-        focus.autoInProgress = { settings.autoInProgress }
         timer.onEntrySent = { notion.requestSoon() }
+        // The only Status write: starting a timer on a task moves it To Do → In progress, after reading the
+        // task's current Status from Notion. Any other status is left alone.
+        let settings = settings
+        let focus = focus
+        timer.onStartedOnTask = { taskId in
+            guard settings.autoInProgress else { return }
+            Task {
+                if await notion.markInProgressIfToDo(taskId: taskId) {
+                    await focus.mirrorInProgressToMoxie(taskId: taskId)
+                }
+            }
+        }
     }
 }

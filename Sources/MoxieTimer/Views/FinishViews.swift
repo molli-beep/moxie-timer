@@ -8,7 +8,6 @@ struct FinishControl<Trailing: View>: View {
     @ViewBuilder var trailing: Trailing
 
     @Environment(FocusStore.self) private var focus
-    @Environment(AppSettings.self) private var settings
     @Environment(TimerStore.self) private var timer
     @State private var choosing = false
 
@@ -54,11 +53,6 @@ struct FinishControl<Trailing: View>: View {
 
             FlowLayout(spacing: 6) {
                 outcomeButton(target.ticketId != nil ? "Done · close ticket" : "Done", icon: "checkmark", outcome: .done, filled: true)
-                if target.ticketId == nil {
-                    ForEach(settings.finishStatusList, id: \.self) { status in
-                        outcomeButton(status, icon: nil, outcome: .status(status), filled: false)
-                    }
-                }
                 outcomeButton("Just save the time", icon: "clock", outcome: .keepOpen, filled: false)
             }
             .disabled(focus.isFinishing)
