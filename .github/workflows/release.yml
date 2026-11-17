@@ -18,7 +18,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    # macos-15 machines are easier to get than macos-26 ones (runs sat queued); the app still targets
+    # macOS 14+ and is built universal, so the runner's own OS doesn't matter to users.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
 
@@ -34,9 +36,14 @@ jobs:
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Select Xcode
-        # Newest stable Xcode 26+ so Apple's on-device FoundationModels framework is available.
+        # Newest stable Xcode 26+ so Apple's on-device FoundationModels framework is available. If the image
+        # has none, fall back to the newest stable Xcode: the AI code is behind `#if canImport(FoundationModels)`.
         run: |
-          XCODE="$(ls -d /Applications/Xcode_2[6-9]*.app | grep -vi beta | sort -V | tail -1)"
+          XCODE="$(ls -d /Applications/Xcode_2[6-9]*.app 2>/dev/null | grep -vi beta | sort -V | tail -1 || true)"
+          if [[ -z "$XCODE" ]]; then
+            XCODE="$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)"
+            echo "No Xcode 26+ on this image; on-device AI features won't be compiled in."
+          fi
           echo "Using $XCODE"
           sudo xcode-select -s "$XCODE"
 
